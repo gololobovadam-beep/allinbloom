@@ -54,6 +54,7 @@ describe("parseBouquetForm", () => {
       defaultFlowerQuantity: 100,
       discountPercent: 15,
       discountNote: "Spring promo",
+      galleryImages: ["/images/custom.webp"],
       image: "/images/custom.webp",
       image2: null,
       image3: null,
@@ -88,6 +89,7 @@ describe("parseBouquetForm", () => {
     expect(payload.discountPercent).toBe(90);
     expect(payload.discountNote).toBe("Discount");
     expect(payload.image).toBe("/images/bouquet-1.webp");
+    expect(payload.galleryImages).toEqual(["/images/bouquet-1.webp"]);
     expect(payload.image2).toBeNull();
     expect(payload.image3).toBeNull();
     expect(payload.image4).toBeNull();
@@ -145,6 +147,33 @@ describe("parseBouquetForm", () => {
     expect(payload.image3).toBeNull();
     expect(payload.image4).toBe("/images/4.webp");
     expect(payload.image5).toBeNull();
+    expect(payload.image6).toBe("/images/6.webp");
+    expect(payload.galleryImages).toEqual(["/images/main.webp"]);
+  });
+
+  it("keeps an arbitrary ordered gallery and synchronizes the legacy first six slots", () => {
+    const payload = parseBouquetForm(
+      makeFormData({
+        name: "Large gallery",
+        description: "desc",
+        price: "75",
+        flowerTypes: ["rose"],
+        bouquetType: "mono",
+        colors: "white",
+        galleryImages: [
+          "/images/1.webp",
+          "/images/2.webp",
+          "/images/3.webp",
+          "/images/4.webp",
+          "/images/5.webp",
+          "/images/6.webp",
+          "/images/7.webp",
+        ],
+      })
+    );
+
+    expect(payload.galleryImages).toHaveLength(7);
+    expect(payload.image).toBe("/images/1.webp");
     expect(payload.image6).toBe("/images/6.webp");
   });
 });

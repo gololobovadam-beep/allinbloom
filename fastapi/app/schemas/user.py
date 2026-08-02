@@ -16,6 +16,4 @@ class UserOut(SchemaBase):
 
 
 class TokenOut(SchemaBase):
-    access_token: str
-    token_type: str = "bearer"
     user: UserOut

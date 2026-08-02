@@ -17,6 +17,11 @@ def clamp_percent(value: int) -> int:
     return max(0, min(90, round(value)))
 
 
+def _catalog_type_value(bouquet) -> str:
+    raw = getattr(bouquet, "catalog_type", "FLOWERS")
+    return str(getattr(raw, "value", raw) or "FLOWERS").upper()
+
+
 def apply_percent_discount(price_cents: int, percent: int) -> int:
     clamped = clamp_percent(percent)
     return max(0, round(price_cents * (100 - clamped) / 100))
@@ -35,6 +40,12 @@ def _has_category_filters(settings) -> bool:
 
 
 def _matches_category(bouquet, settings) -> bool:
+    # Existing category-discount controls describe flower attributes.  Do not
+    # accidentally apply them to balloons/gifts that carry neutral legacy
+    # flower fields for database compatibility.
+    catalog_type = _catalog_type_value(bouquet)
+    if catalog_type != "FLOWERS":
+        return False
     if settings.category_discount_percent <= 0:
         return False
     if not _has_category_filters(settings):
@@ -77,6 +88,11 @@ def _matches_category(bouquet, settings) -> bool:
 
 
 def get_bouquet_discount(bouquet, settings) -> Optional[DiscountInfo]:
+    # Event Space is booked externally and tiers own its displayed pricing.
+    # It must never inherit checkout-oriented catalog discounts.
+    catalog_type = _catalog_type_value(bouquet)
+    if catalog_type == "EVENT_SPACE":
+        return None
     if bouquet.discount_percent > 0:
         return DiscountInfo(
             percent=bouquet.discount_percent,
@@ -103,13 +119,14 @@ def get_bouquet_discount(bouquet, settings) -> Optional[DiscountInfo]:
 
 def get_bouquet_pricing(bouquet, settings) -> dict:
     discount = get_bouquet_discount(bouquet, settings)
+    base_price = int(getattr(bouquet, "price_cents", 0) or 0)
     final_price = (
-        apply_percent_discount(bouquet.price_cents, discount.percent)
+        apply_percent_discount(base_price, discount.percent)
         if discount
-        else bouquet.price_cents
+        else base_price
     )
     return {
-        "original_price_cents": bouquet.price_cents,
+        "original_price_cents": base_price,
         "final_price_cents": final_price,
         "discount": discount,
     }
@@ -134,4 +151,8 @@ def get_cart_item_discount(item, settings) -> Optional[DiscountInfo]:
     bouquet.price_cents = item.get("base_price_cents") or 0
     bouquet.discount_percent = 0
     bouquet.discount_note = None
+    # Cart reconstruction is retained for compatibility with older callers.
+    # Keep its catalog type so flower-only category rules cannot leak onto a
+    # neutralized gift or balloon payload.
+    bouquet.catalog_type = item.get("catalog_type") or item.get("catalogType") or "FLOWERS"
     return get_bouquet_discount(bouquet, settings)

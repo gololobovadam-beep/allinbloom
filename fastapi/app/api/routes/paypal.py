@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.deps import get_db, get_optional_user
+from app.api.deps import _reject_cross_site_cookie_request, get_db, get_optional_user
 from app.core.critical_logging import log_critical_event
-from app.core.security import decode_checkout_cancel_token
+from app.core.security import checkout_access_cookie_name, decode_checkout_access_token
 from app.models.enums import OrderStatus
 from app.models.order import Order
 from app.schemas.paypal import PayPalCaptureRequest, PayPalCaptureResponse
@@ -37,6 +37,7 @@ from app.services.webhook_events import (
 )
 
 router = APIRouter(prefix="/api/paypal", tags=["paypal"])
+MAX_WEBHOOK_BODY_BYTES = 1_000_000
 
 
 def _load_order_by_id(db: Session, order_id: str | None) -> Order | None:
@@ -88,7 +89,7 @@ def _order_email(order: Order) -> str:
     return (order.email or "").strip().lower()
 
 
-def _is_order_access_allowed(order: Order, *, user, cancel_token: str | None) -> bool:
+def _is_order_access_allowed(order: Order, *, user, request: Request) -> bool:
     order_email = _order_email(order)
     if not order_email:
         return False
@@ -97,18 +98,22 @@ def _is_order_access_allowed(order: Order, *, user, cancel_token: str | None) ->
     if user_email and user_email == order_email:
         return True
 
-    token_value = (cancel_token or "").strip()
+    try:
+        token_value = request.cookies.get(checkout_access_cookie_name(order.id), "").strip()
+    except ValueError:
+        return False
     if not token_value:
         return False
 
+    _reject_cross_site_cookie_request(request)
+
     try:
-        token_payload = decode_checkout_cancel_token(token_value)
+        token_payload = decode_checkout_access_token(token_value)
     except Exception:
         return False
 
     token_order_id = str(token_payload.get("order_id") or "").strip()
-    token_email = str(token_payload.get("email") or "").strip().lower()
-    return token_order_id == order.id and token_email == order_email
+    return token_order_id == order.id
 
 
 def _set_order_failed(
@@ -236,7 +241,7 @@ async def capture_paypal_order(
             context={"paypal_order_id": paypal_order_id, "order_id": order_id},
         )
         raise HTTPException(status_code=404, detail="Order not found.")
-    if order.paypal_order_id and order.paypal_order_id != paypal_order_id:
+    if order.paypal_order_id != paypal_order_id:
         log_critical_event(
             domain="payment",
             event="paypal_order_id_mismatch",
@@ -251,9 +256,16 @@ async def capture_paypal_order(
         raise HTTPException(status_code=400, detail="PayPal order id mismatch.")
     if payload.checkout_order_id and payload.checkout_order_id != order.id:
         raise HTTPException(status_code=404, detail="Order not found.")
-    if not _is_order_access_allowed(
-        order, user=user, cancel_token=payload.cancel_token
-    ):
+    if not isinstance(order_id, str) or order_id != order.id:
+        log_critical_event(
+            domain="payment",
+            event="paypal_custom_id_mismatch",
+            message="PayPal capture custom id does not match the stored order.",
+            request=request,
+            context={"order_id": order.id, "paypal_order_id": paypal_order_id},
+        )
+        raise HTTPException(status_code=400, detail="PayPal order metadata mismatch.")
+    if not _is_order_access_allowed(order, user=user, request=request):
         log_critical_event(
             domain="payment",
             event="paypal_capture_unauthorized",
@@ -269,7 +281,7 @@ async def capture_paypal_order(
 
     amount_cents = metadata.get("amount_cents")
     currency = metadata.get("currency")
-    if isinstance(amount_cents, int) and amount_cents != order.total_cents:
+    if not isinstance(amount_cents, int) or amount_cents != order.total_cents:
         log_critical_event(
             domain="payment",
             event="paypal_amount_mismatch",
@@ -283,7 +295,7 @@ async def capture_paypal_order(
             },
         )
         raise HTTPException(status_code=400, detail="Order amount mismatch.")
-    if currency and currency.upper() != order.currency.upper():
+    if not isinstance(currency, str) or currency.upper() != order.currency.upper():
         log_critical_event(
             domain="payment",
             event="paypal_currency_mismatch",
@@ -349,7 +361,7 @@ async def capture_paypal_order(
         status = metadata.get("status") or ""
         amount_cents = metadata.get("amount_cents")
         currency = metadata.get("currency")
-        if isinstance(amount_cents, int) and amount_cents != order.total_cents:
+        if not isinstance(amount_cents, int) or amount_cents != order.total_cents:
             log_critical_event(
                 domain="payment",
                 event="paypal_amount_mismatch",
@@ -363,7 +375,7 @@ async def capture_paypal_order(
                 },
             )
             raise HTTPException(status_code=400, detail="Order amount mismatch.")
-        if currency and currency.upper() != order.currency.upper():
+        if not isinstance(currency, str) or currency.upper() != order.currency.upper():
             log_critical_event(
                 domain="payment",
                 event="paypal_currency_mismatch",
@@ -455,7 +467,12 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
         )
         raise HTTPException(status_code=400, detail="PayPal webhook is not configured.")
 
+    raw_content_length = request.headers.get("content-length")
+    if raw_content_length and raw_content_length.isdigit() and int(raw_content_length) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook payload is too large.")
     payload_bytes = await request.body()
+    if len(payload_bytes) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook payload is too large.")
     try:
         event = json.loads(payload_bytes.decode("utf-8"))
     except Exception:
@@ -600,9 +617,25 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
         mark_webhook_event_processed(db, provider="paypal", event_id=event_id)
         return {"received": True}
 
+    if custom_id != order.id or order.paypal_order_id != paypal_order_id:
+        log_critical_event(
+            domain="payment",
+            event="paypal_webhook_order_binding_mismatch",
+            message="PayPal webhook order identifiers do not match the stored order.",
+            request=request,
+            context={
+                "event_type": event_type,
+                "event_id": event_id,
+                "order_id": order.id,
+                "paypal_order_id": paypal_order_id,
+            },
+        )
+        mark_webhook_event_processed(db, provider="paypal", event_id=event_id)
+        return {"received": True}
+
     amount_cents = metadata.get("amount_cents")
     currency = metadata.get("currency")
-    if isinstance(amount_cents, int) and amount_cents != order.total_cents:
+    if not isinstance(amount_cents, int) or amount_cents != order.total_cents:
         log_critical_event(
             domain="payment",
             event="paypal_amount_mismatch",
@@ -619,7 +652,7 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
         )
         mark_webhook_event_processed(db, provider="paypal", event_id=event_id)
         return {"received": True}
-    if currency and currency.upper() != order.currency.upper():
+    if not isinstance(currency, str) or currency.upper() != order.currency.upper():
         log_critical_event(
             domain="payment",
             event="paypal_currency_mismatch",

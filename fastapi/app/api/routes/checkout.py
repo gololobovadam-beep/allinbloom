@@ -6,17 +6,23 @@ import json
 import logging
 from urllib.parse import quote_plus
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 import stripe
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_optional_user
+from app.api.deps import _reject_cross_site_cookie_request, get_db, get_optional_user
 from app.core.config import settings
 from app.core.critical_logging import log_critical_event
-from app.core.security import create_checkout_cancel_token, decode_checkout_cancel_token
+from app.core.rate_limit import SlidingWindowRateLimiter, enforce_rate_limit
+from app.core.security import (
+    CHECKOUT_ACCESS_TOKEN_TTL_HOURS,
+    checkout_access_cookie_name,
+    create_checkout_access_token,
+    decode_checkout_access_token,
+)
 from app.models.bouquet import Bouquet
-from app.models.enums import BouquetType, OrderStatus
+from app.models.enums import BouquetType, CatalogType, OrderStatus
 from app.models.order import Order
 from app.models.order_item import OrderItem
 from app.models.user import User
@@ -64,7 +70,14 @@ from app.services.settings import get_store_settings
 router = APIRouter(prefix="/api/checkout", tags=["checkout"])
 FLOWER_QUANTITY_MIN = 1
 FLOWER_QUANTITY_MAX = 1001
+STANDARD_PRODUCT_QUANTITY_MAX = 25
+CUSTOM_PRODUCT_QUANTITY_MAX = 10
+MAX_CHECKOUT_TOTAL_CENTS = 10_000_000
+FLORIST_CHOICE_NAME = "Florist Choice Bouquet"
+FLORIST_CHOICE_IMAGE = "/images/florist-choice.webp"
+FLORIST_CHOICE_ID_PREFIX = "florist-choice-"
 DELIVERY_TIME_WINDOWS = {"8:30 AM - 12 PM", "12 PM - 4 PM", "4 PM - 8 PM"}
+checkout_limiter = SlidingWindowRateLimiter(limit=10, window_seconds=15 * 60)
 
 
 def _is_flower_quantity_enabled_for_bouquet(bouquet: Bouquet) -> bool:
@@ -144,6 +157,22 @@ CLIENT_CHECKOUT_EVENTS = {
 
 def _clean_text(value: str | None) -> str:
     return (value or "").strip()
+
+
+def _safe_checkout_event_context(context: dict | None) -> dict[str, str | int | float | bool]:
+    """Keep browser telemetry bounded and free from nested sensitive blobs."""
+    safe: dict[str, str | int | float | bool] = {}
+    for raw_key, raw_value in (context or {}).items():
+        key = str(raw_key).strip()
+        if not key or len(key) > 64:
+            continue
+        if isinstance(raw_value, str):
+            safe[key] = raw_value.strip()[:256]
+        elif isinstance(raw_value, bool):
+            safe[key] = raw_value
+        elif isinstance(raw_value, (int, float)):
+            safe[key] = raw_value
+    return safe
 
 
 def _add_one_month(value: date) -> date:
@@ -236,7 +265,28 @@ def _format_delivery_address(
     return ", ".join(part for part in parts if part)
 
 
-def _is_order_access_allowed(order: Order, *, user, cancel_token: str | None) -> bool:
+def _absolute_image_url(origin: str, image: str | None) -> str | None:
+    value = (image or "").strip()
+    if not value:
+        return None
+    if value.startswith(("http://", "https://")):
+        return value
+    return f"{origin}{value}"
+
+
+def _set_checkout_access_cookie(response: Response, order_id: str) -> None:
+    response.set_cookie(
+        key=checkout_access_cookie_name(order_id),
+        value=create_checkout_access_token(order_id=order_id),
+        httponly=True,
+        secure=settings.is_production(),
+        samesite="lax",
+        path="/",
+        max_age=CHECKOUT_ACCESS_TOKEN_TTL_HOURS * 60 * 60,
+    )
+
+
+def _is_order_access_allowed(order: Order, *, user, request: Request) -> bool:
     order_email = _order_email(order)
     if not order_email:
         return False
@@ -245,18 +295,22 @@ def _is_order_access_allowed(order: Order, *, user, cancel_token: str | None) ->
     if user_email and user_email == order_email:
         return True
 
-    token_value = (cancel_token or "").strip()
+    try:
+        token_value = request.cookies.get(checkout_access_cookie_name(order.id), "").strip()
+    except ValueError:
+        return False
     if not token_value:
         return False
 
+    _reject_cross_site_cookie_request(request)
+
     try:
-        token_payload = decode_checkout_cancel_token(token_value)
+        token_payload = decode_checkout_access_token(token_value)
     except Exception:
         return False
 
     token_order_id = str(token_payload.get("order_id") or "").strip()
-    token_email = str(token_payload.get("email") or "").strip().lower()
-    return token_order_id == order.id and token_email == order_email
+    return token_order_id == order.id
 
 
 def _resolve_first_order_discount_percent(
@@ -279,9 +333,11 @@ def _resolve_first_order_discount_percent(
 async def start_checkout(
     payload: CheckoutRequest,
     request: Request,
+    response: Response,
     user=Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
+    enforce_rate_limit(request, checkout_limiter, detail="Too many checkout attempts. Please try again shortly.")
     user_id = user.id if user else None
 
     raw_payment_method = payload.payment_method
@@ -493,7 +549,7 @@ async def start_checkout(
     for item in items:
         if item.is_custom:
             price_cents = int(item.price_cents or 0)
-            quantity = max(1, item.quantity)
+            quantity = item.quantity
             details = _clean_text(item.details)
             if details and len(details) > 500:
                 log_critical_event(
@@ -511,11 +567,15 @@ async def start_checkout(
                 raise HTTPException(
                     status_code=400, detail="Custom item details are too long."
                 )
-            if not item.name or not item.image:
+            if (
+                not item.id.startswith(FLORIST_CHOICE_ID_PREFIX)
+                or item.name != FLORIST_CHOICE_NAME
+                or item.image != FLORIST_CHOICE_IMAGE
+            ):
                 log_critical_event(
                     domain="cart",
                     event="invalid_custom_item_payload",
-                    message="Custom cart item is missing required fields.",
+                    message="Custom cart item does not match the supported florist-choice product.",
                     request=request,
                     context={"user_id": user_id, "item_id": item.id},
                     level=logging.WARNING,
@@ -523,7 +583,12 @@ async def start_checkout(
                 raise HTTPException(
                     status_code=400, detail="Some items are unavailable."
                 )
-            if price_cents < 6500 or price_cents > 18000:
+            if (
+                price_cents < 6500
+                or price_cents > 18000
+                or price_cents % 500 != 0
+                or quantity > CUSTOM_PRODUCT_QUANTITY_MAX
+            ):
                 log_critical_event(
                     domain="cart",
                     event="invalid_custom_item_price",
@@ -542,8 +607,9 @@ async def start_checkout(
             normalized_items.append(
                 {
                     "id": item.id,
-                    "name": item.name,
-                    "image": item.image,
+                    "bouquet_id": None,
+                    "name": FLORIST_CHOICE_NAME,
+                    "image": FLORIST_CHOICE_IMAGE,
                     "quantity": quantity,
                     "unit_price": price_cents,
                     "details": details or None,
@@ -562,6 +628,17 @@ async def start_checkout(
                 level=logging.WARNING,
             )
             raise HTTPException(status_code=400, detail="Some items are unavailable.")
+        catalog_type = getattr(bouquet, "catalog_type", CatalogType.FLOWERS)
+        if catalog_type == CatalogType.EVENT_SPACE or str(catalog_type).upper() == "EVENT_SPACE":
+            log_critical_event(
+                domain="payment",
+                event="checkout_event_space_rejected",
+                message="Event Space products must not enter the payment checkout flow.",
+                request=request,
+                context={"user_id": user_id, "item_id": item.id},
+                level=logging.WARNING,
+            )
+            raise HTTPException(status_code=400, detail="Event Space bookings are requested separately.")
         discount = get_bouquet_discount(bouquet, settings_row)
         if discount:
             has_any_discount = True
@@ -571,8 +648,8 @@ async def start_checkout(
             else bouquet.price_cents
         )
         has_flower_quantity = _is_flower_quantity_enabled_for_bouquet(bouquet)
-        raw_quantity = int(item.quantity or 0)
-        quantity = max(1, raw_quantity)
+        raw_quantity = item.quantity
+        quantity = raw_quantity
         details = None
         if has_flower_quantity:
             if raw_quantity < FLOWER_QUANTITY_MIN or raw_quantity > FLOWER_QUANTITY_MAX:
@@ -599,9 +676,28 @@ async def start_checkout(
                 )
             quantity = raw_quantity
             details = f"Flowers: {quantity}"
+        elif raw_quantity > STANDARD_PRODUCT_QUANTITY_MAX:
+            log_critical_event(
+                domain="cart",
+                event="checkout_product_quantity_out_of_range",
+                message="Checkout product quantity is outside the allowed range.",
+                request=request,
+                context={
+                    "user_id": user_id,
+                    "item_id": item.id,
+                    "quantity": raw_quantity,
+                    "max_quantity": STANDARD_PRODUCT_QUANTITY_MAX,
+                },
+                level=logging.WARNING,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Product quantity must be at most {STANDARD_PRODUCT_QUANTITY_MAX}.",
+            )
         normalized_items.append(
             {
                 "id": bouquet.id,
+                "bouquet_id": bouquet.id,
                 "name": bouquet.name,
                 "image": bouquet.image,
                 "quantity": quantity,
@@ -632,10 +728,17 @@ async def start_checkout(
         .first()
         is not None
     )
-    first_order_discount_percent = _resolve_first_order_discount_percent(
-        configured_percent=settings_row.first_order_discount_percent,
-        has_blocking_order_history=has_blocking_order_history,
-        has_any_discount=has_any_discount,
+    # A guest can claim arbitrary email addresses and cannot be serialized
+    # across concurrent browser sessions.  Limit this one-time promotion to a
+    # verified account, where the user-row lock above makes it race-safe.
+    first_order_discount_percent = (
+        _resolve_first_order_discount_percent(
+            configured_percent=settings_row.first_order_discount_percent,
+            has_blocking_order_history=has_blocking_order_history,
+            has_any_discount=has_any_discount,
+        )
+        if user
+        else 0
     )
 
     discounted_items = []
@@ -651,9 +754,20 @@ async def start_checkout(
         item["unit_price"] * item["quantity"] for item in discounted_items
     )
     computed_total = discounted_subtotal + (delivery.fee_cents or 0)
+    if computed_total <= 0 or computed_total > MAX_CHECKOUT_TOTAL_CENTS:
+        log_critical_event(
+            domain="payment",
+            event="checkout_total_out_of_range",
+            message="Server-calculated checkout total is outside the allowed range.",
+            request=request,
+            context={"user_id": user_id, "total_cents": computed_total},
+            level=logging.WARNING,
+        )
+        raise HTTPException(status_code=400, detail="Checkout total is invalid.")
 
     order_items = [
         OrderItem(
+            bouquet_id=item.get("bouquet_id"),
             name=item["name"],
             price_cents=item["unit_price"],
             quantity=item["quantity"],
@@ -713,10 +827,6 @@ async def start_checkout(
         db.commit()
 
     origin = settings.resolved_site_url()
-    checkout_cancel_token = create_checkout_cancel_token(
-        order_id=order.id, email=checkout_email
-    )
-    encoded_cancel_token = quote_plus(checkout_cancel_token)
     encoded_order_id = quote_plus(order.id)
 
     record_payment_event_best_effort(
@@ -747,11 +857,10 @@ async def start_checkout(
                 payer_name=(user.name if user else None),
                 return_url=(
                     f"{origin}/checkout/success?provider=paypal&orderId={encoded_order_id}"
-                    f"&cancelToken={encoded_cancel_token}"
                 ),
                 cancel_url=(
                     f"{origin}/cart?checkoutCanceled=1&orderId={encoded_order_id}"
-                    f"&cancelToken={encoded_cancel_token}&provider=paypal"
+                    f"&provider=paypal"
                 ),
             )
         except PayPalApiError as exc:
@@ -792,6 +901,7 @@ async def start_checkout(
 
         order.paypal_order_id = paypal_order.order_id
         db.commit()
+        _set_checkout_access_cookie(response, order.id)
         record_payment_event_best_effort(
             db,
             order_id=order.id,
@@ -805,7 +915,6 @@ async def start_checkout(
         return CheckoutResponse(
             url=paypal_order.approve_url,
             order_id=order.id,
-            cancel_token=checkout_cancel_token,
             provider="paypal",
         )
 
@@ -815,17 +924,17 @@ async def start_checkout(
         + STRIPE_CHECKOUT_SESSION_EXPIRATION_SECONDS
     )
 
-    image_url = item["image"]
-    if image_url and not image_url.startswith(("http://", "https://")):
-        image_url = f"{origin}{image_url}"
-
     line_items = [
         {
             "price_data": {
                 "currency": "usd",
                 "product_data": {
                     "name": item["name"],
-                    "images": [image_url] if image_url else [],
+                    "images": (
+                        [image_url]
+                        if (image_url := _absolute_image_url(origin, item["image"]))
+                        else []
+                    ),
                 },
                 "unit_amount": item["unit_price"],
             },
@@ -868,11 +977,10 @@ async def start_checkout(
             line_items=line_items,
             success_url=(
                 f"{origin}/checkout/success?provider=stripe&orderId={encoded_order_id}"
-                f"&cancelToken={encoded_cancel_token}"
             ),
             cancel_url=(
                 f"{origin}/cart?checkoutCanceled=1&orderId={encoded_order_id}"
-                f"&cancelToken={encoded_cancel_token}&provider=stripe"
+                f"&provider=stripe"
             ),
             payment_method_types=["card"],
             customer_email=checkout_email or None,
@@ -985,10 +1093,10 @@ async def start_checkout(
             request=request,
         )
         raise HTTPException(status_code=500, detail="Unable to start checkout.")
+    _set_checkout_access_cookie(response, order.id)
     return CheckoutResponse(
         url=session.url,
         order_id=order.id,
-        cancel_token=checkout_cancel_token,
         provider="stripe",
     )
 
@@ -1024,9 +1132,7 @@ async def record_checkout_event(
         )
         raise HTTPException(status_code=404, detail="Not found")
 
-    if not _is_order_access_allowed(
-        order, user=user, cancel_token=payload.cancel_token
-    ):
+    if not _is_order_access_allowed(order, user=user, request=request):
         log_critical_event(
             domain="payment",
             event="checkout_client_event_unauthorized",
@@ -1039,7 +1145,7 @@ async def record_checkout_event(
 
     provider = _payment_provider_for_order(order, payload.provider)
     event_context = {
-        **(payload.context or {}),
+        **_safe_checkout_event_context(payload.context),
         "order_status": order.status.value,
         "client_event": event_name,
     }
@@ -1089,15 +1195,7 @@ async def cancel_checkout(
             level=logging.WARNING,
         )
         raise HTTPException(status_code=404, detail="Not found")
-    access_allowed = _is_order_access_allowed(
-        order, user=user, cancel_token=payload.cancel_token
-    )
-    if (
-        not access_allowed
-        and paypal_order_id
-        and order.paypal_order_id == paypal_order_id
-    ):
-        access_allowed = True
+    access_allowed = _is_order_access_allowed(order, user=user, request=request)
     if not access_allowed:
         log_critical_event(
             domain="payment",
@@ -1124,7 +1222,9 @@ async def cancel_checkout(
         stripe_session_id=order.stripe_session_id,
         context={
             "order_status_before": order.status.value,
-            "has_cancel_token": bool(payload.cancel_token),
+            "has_checkout_access_cookie": bool(
+                request.cookies.get(checkout_access_cookie_name(order.id))
+            ),
             "has_paypal_order_token": bool(paypal_order_id),
         },
         request=request,
@@ -1158,6 +1258,9 @@ async def cancel_checkout(
         )
         return CheckoutCancelResponse(canceled=True, status=order.status.value)
 
+    stripe_cancel_confirmed: bool | None = None
+    if order.stripe_session_id:
+        stripe_cancel_confirmed = False
     if order.stripe_session_id and settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key
         try:
@@ -1236,6 +1339,7 @@ async def cancel_checkout(
             if session_status == "open":
                 try:
                     stripe.checkout.Session.expire(order.stripe_session_id)
+                    stripe_cancel_confirmed = True
                     record_payment_event_best_effort(
                         db,
                         order_id=order.id,
@@ -1269,6 +1373,9 @@ async def cancel_checkout(
                         request=request,
                     )
 
+    paypal_cancel_confirmed: bool | None = None
+    if order.paypal_order_id:
+        paypal_cancel_confirmed = False
     if order.paypal_order_id and paypal_is_configured():
         paypal_order_payload = None
         try:
@@ -1351,6 +1458,7 @@ async def cancel_checkout(
             }:
                 try:
                     paypal_void_order(order.paypal_order_id)
+                    paypal_cancel_confirmed = True
                     record_payment_event_best_effort(
                         db,
                         order_id=order.id,
@@ -1388,7 +1496,49 @@ async def cancel_checkout(
                         request=request,
                     )
 
-    _set_order_status_safely(db, order, OrderStatus.CANCELED)
+    provider_cancellation_confirmed = all(
+        value is True
+        for value in (stripe_cancel_confirmed, paypal_cancel_confirmed)
+        if value is not None
+    )
+    if not provider_cancellation_confirmed:
+        db.refresh(order)
+        record_payment_event_best_effort(
+            db,
+            order_id=order.id,
+            event="checkout_cancel_pending_provider_confirmation",
+            provider=provider,
+            source="server",
+            message="Checkout cancellation was not finalized because the provider state could not be confirmed.",
+            stripe_session_id=order.stripe_session_id,
+            context={"order_status": order.status.value},
+            request=request,
+        )
+        return CheckoutCancelResponse(canceled=False, status=order.status.value)
+
+    updated = db.execute(
+        update(Order)
+        .where(Order.id == order.id, Order.status == OrderStatus.PENDING)
+        .values(status=OrderStatus.CANCELED)
+    )
+    db.commit()
+    db.refresh(order)
+    if not updated.rowcount:
+        record_payment_event_best_effort(
+            db,
+            order_id=order.id,
+            event="checkout_cancel_concurrent_status_change",
+            provider=provider,
+            source="server",
+            message="Checkout cancellation did not overwrite a concurrent payment status update.",
+            stripe_session_id=order.stripe_session_id,
+            context={"order_status": order.status.value},
+            request=request,
+        )
+        return CheckoutCancelResponse(
+            canceled=order.status in {OrderStatus.CANCELED, OrderStatus.FAILED},
+            status=order.status.value,
+        )
     record_payment_event_best_effort(
         db,
         order_id=order.id,
@@ -1422,9 +1572,7 @@ async def checkout_status(
             level=logging.WARNING,
         )
         raise HTTPException(status_code=404, detail="Not found")
-    if not _is_order_access_allowed(
-        order, user=user, cancel_token=payload.cancel_token
-    ):
+    if not _is_order_access_allowed(order, user=user, request=request):
         log_critical_event(
             domain="payment",
             event="checkout_status_unauthorized",

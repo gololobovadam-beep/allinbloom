@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { StoreSettings } from "@/lib/api-types";
 import { COLOR_OPTIONS, FLOWER_TYPES } from "@/lib/constants";
@@ -54,7 +54,20 @@ function SubmitButton() {
   );
 }
 
-export default function AdminDiscountsForm({
+export default function AdminDiscountsForm(props: AdminDiscountsFormProps) {
+  // These controls are local, editable selections. Recreate just the form
+  // state when their server-provided defaults change instead of synchronizing
+  // them in an effect after render.
+  const categoryDefaultsKey = JSON.stringify([
+    props.settings.categoryFlowerType || "",
+    props.settings.categoryMixed || "",
+    props.settings.categoryColor || "",
+  ]);
+
+  return <AdminDiscountsFormEditor key={categoryDefaultsKey} {...props} />;
+}
+
+function AdminDiscountsFormEditor({
   settings,
   action,
 }: AdminDiscountsFormProps) {
@@ -92,12 +105,6 @@ export default function AdminDiscountsForm({
     ],
     []
   );
-
-  useEffect(() => {
-    setCategoryFlowerType(settings.categoryFlowerType || "");
-    setCategoryMixed(settings.categoryMixed || "");
-    setCategoryColor(normalizeColorValue(settings.categoryColor || ""));
-  }, [settings.categoryColor, settings.categoryFlowerType, settings.categoryMixed]);
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     const formData = new FormData(event.currentTarget);

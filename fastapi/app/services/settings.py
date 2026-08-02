@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.models.store_settings import StoreSettings
+from app.services.catalog_products import replace_home_gallery_images
 from app.services.colors import normalize_color_value
 
 
@@ -52,11 +53,29 @@ def get_store_settings(db: Session) -> StoreSettings:
 
 def update_store_settings(db: Session, data: dict) -> StoreSettings:
     settings = get_store_settings(db)
+    home_gallery_images = data.pop("home_gallery_images", None)
+    legacy_home_keys = (
+        "home_gallery_image_1",
+        "home_gallery_image_2",
+        "home_gallery_image_3",
+        "home_gallery_image_4",
+        "home_gallery_image_5",
+        "home_gallery_image_6",
+    )
+    # Existing admin clients still submit six named fields.  Mirror such
+    # updates into the normalized relation so its preferred read path does not
+    # mask legacy edits during the compatibility window.
+    if home_gallery_images is None and any(key in data for key in legacy_home_keys):
+        home_gallery_images = [
+            data.get(key, getattr(settings, key)) for key in legacy_home_keys
+        ]
     if "category_color" in data:
         data["category_color"] = normalize_color_value(data.get("category_color"))
     for key, value in data.items():
         if hasattr(settings, key):
             setattr(settings, key, value)
+    if home_gallery_images is not None:
+        replace_home_gallery_images(settings, home_gallery_images)
     db.commit()
     db.refresh(settings)
     return settings

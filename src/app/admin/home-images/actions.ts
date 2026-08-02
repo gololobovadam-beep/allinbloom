@@ -18,35 +18,20 @@ const parseImageUrl = (value: FormDataEntryValue | null, fallback: string) => {
 export async function updateHomeImages(formData: FormData) {
   await requireAdmin();
 
+  const homeGalleryImages = formData
+    .getAll("homeGalleryImages")
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index);
+
   await updateStoreSettings({
     homeHeroImage: parseImageUrl(
       formData.get("homeHeroImage"),
       DEFAULT_HOME_HERO_IMAGE
     ),
-    homeGalleryImage1: parseImageUrl(
-      formData.get("homeGalleryImage1"),
-      DEFAULT_HOME_GALLERY_IMAGES[0]
-    ),
-    homeGalleryImage2: parseImageUrl(
-      formData.get("homeGalleryImage2"),
-      DEFAULT_HOME_GALLERY_IMAGES[1]
-    ),
-    homeGalleryImage3: parseImageUrl(
-      formData.get("homeGalleryImage3"),
-      DEFAULT_HOME_GALLERY_IMAGES[2]
-    ),
-    homeGalleryImage4: parseImageUrl(
-      formData.get("homeGalleryImage4"),
-      DEFAULT_HOME_GALLERY_IMAGES[3]
-    ),
-    homeGalleryImage5: parseImageUrl(
-      formData.get("homeGalleryImage5"),
-      DEFAULT_HOME_GALLERY_IMAGES[4]
-    ),
-    homeGalleryImage6: parseImageUrl(
-      formData.get("homeGalleryImage6"),
-      DEFAULT_HOME_GALLERY_IMAGES[5]
-    ),
+    homeGalleryImages: homeGalleryImages.length
+      ? homeGalleryImages
+      : [...DEFAULT_HOME_GALLERY_IMAGES],
     catalogCategoryImageMono: parseImageUrl(
       formData.get("catalogCategoryImageMono"),
       DEFAULT_CATALOG_CATEGORY_IMAGES.mono

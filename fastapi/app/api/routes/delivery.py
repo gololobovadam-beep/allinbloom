@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.critical_logging import log_critical_event
+from app.core.rate_limit import SlidingWindowRateLimiter, enforce_rate_limit
 from app.schemas.delivery import DeliveryQuoteOut, DeliveryQuoteRequest
 from app.services.delivery import (
     build_delivery_quote_log_context,
@@ -11,10 +12,12 @@ from app.services.delivery import (
 )
 
 router = APIRouter(prefix="/api/delivery", tags=["delivery"])
+delivery_quote_limiter = SlidingWindowRateLimiter(limit=20, window_seconds=15 * 60)
 
 
 @router.post("/quote", response_model=DeliveryQuoteOut)
 async def quote_delivery(payload: DeliveryQuoteRequest, request: Request):
+    enforce_rate_limit(request, delivery_quote_limiter)
     result = await get_delivery_quote(payload.address)
     if not result.ok:
         log_critical_event(

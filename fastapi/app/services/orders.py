@@ -88,7 +88,12 @@ def resolve_order_status_from_session(
     metadata_order_id = (
         metadata_raw.get("orderId") if isinstance(metadata_raw, dict) else None
     )
-    if metadata_order_id and metadata_order_id != order.id:
+    session_id = _read_stripe_attr(session, "id")
+    # A paid provider object is authoritative only when every stable binding
+    # points back to the order created by this application.
+    if metadata_order_id != order.id:
+        return None
+    if not isinstance(session_id, str) or session_id != order.stripe_session_id:
         return None
 
     session_status = str(_read_stripe_attr(session, "status") or "").lower()
@@ -97,7 +102,7 @@ def resolve_order_status_from_session(
     currency = str(_read_stripe_attr(session, "currency") or "").lower()
 
     amount_matches = isinstance(amount_total, int) and amount_total == order.total_cents
-    currency_matches = not currency or currency == order.currency.lower()
+    currency_matches = currency == order.currency.lower()
 
     if (
         session_status == "complete"
@@ -259,15 +264,18 @@ def resolve_order_status_from_paypal_order(
     order: Order, payload: dict
 ) -> tuple[OrderStatus | None, str | None]:
     metadata = paypal_extract_order_metadata(payload)
+    custom_id = metadata.get("custom_id")
     amount_cents = metadata.get("amount_cents")
     currency = metadata.get("currency")
     status = metadata.get("status")
     capture_id = metadata.get("capture_id")
     capture_status = metadata.get("capture_status")
 
-    if isinstance(amount_cents, int) and amount_cents != order.total_cents:
+    if custom_id != order.id:
         return None, None
-    if currency and currency.upper() != order.currency.upper():
+    if not isinstance(amount_cents, int) or amount_cents != order.total_cents:
+        return None, None
+    if not isinstance(currency, str) or currency.upper() != order.currency.upper():
         return None, None
 
     if status == "COMPLETED" or capture_status == "COMPLETED":

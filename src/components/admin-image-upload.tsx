@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import ImageWithFallback from "@/components/image-with-fallback";
 import { clientFetch } from "@/lib/api-client";
 
@@ -13,6 +13,7 @@ type AdminImageUploadProps = {
   previewClassName?: string;
   isInvalid?: boolean;
   required?: boolean;
+  onValueChange?: (value: string) => void;
 };
 
 const parseRecommendedSize = (value?: string) => {
@@ -34,6 +35,7 @@ export default function AdminImageUpload({
   previewClassName = "h-32 w-32",
   isInvalid = false,
   required = true,
+  onValueChange,
 }: AdminImageUploadProps) {
   const fileInputId = useId();
   const [imageUrl, setImageUrl] = useState(defaultValue);
@@ -41,9 +43,16 @@ export default function AdminImageUpload({
   const [uploading, setUploading] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState("No file chosen");
 
-  const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-  const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
   const recommendedTarget = parseRecommendedSize(recommendedSize);
+
+  useEffect(() => {
+    setImageUrl(defaultValue);
+  }, [defaultValue]);
+
+  const updateImageUrl = (value: string) => {
+    setImageUrl(value);
+    onValueChange?.(value);
+  };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -54,17 +63,11 @@ export default function AdminImageUpload({
 
     setSelectedFileName(file.name);
 
-    if (!cloudName || !uploadPreset) {
-      setStatus("Cloudinary is not configured.");
-      return;
-    }
-
     setUploading(true);
     setStatus("Uploading...");
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("upload_preset", uploadPreset);
     if (recommendedTarget) {
       formData.append("max_width", String(recommendedTarget.width));
       formData.append("max_height", String(recommendedTarget.height));
@@ -83,7 +86,7 @@ export default function AdminImageUpload({
       } else {
         const url = data.url;
         if (url) {
-          setImageUrl(url);
+          updateImageUrl(url);
           setStatus("Upload complete.");
         } else {
           setStatus("Upload complete, but no URL returned.");
@@ -122,7 +125,7 @@ export default function AdminImageUpload({
         <input
           name={name}
           value={imageUrl}
-          onChange={(event) => setImageUrl(event.target.value)}
+          onChange={(event) => updateImageUrl(event.target.value)}
           required={required}
           className={`h-11 w-full min-w-0 rounded-2xl bg-white/80 px-4 py-0 text-sm text-stone-800 outline-none ${
             isInvalid

@@ -35,9 +35,6 @@ export default function ReviewForm() {
   const [uploading, setUploading] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState("No file chosen");
 
-  const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-  const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
-
   const updateField = <T extends keyof ReviewFormState>(
     key: T,
     value: ReviewFormState[T]
@@ -55,17 +52,11 @@ export default function ReviewForm() {
 
     setSelectedFileName(file.name);
 
-    if (!cloudName || !uploadPreset) {
-      setUploadStatus("Cloudinary is not configured.");
-      return;
-    }
-
     setUploading(true);
     setUploadStatus("Uploading...");
 
     const payload = new FormData();
     payload.append("file", file);
-    payload.append("upload_preset", uploadPreset);
     payload.append("max_width", String(REVIEW_IMAGE_MAX_WIDTH));
     payload.append("max_height", String(REVIEW_IMAGE_MAX_HEIGHT));
     payload.append("format", "webp");

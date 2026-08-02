@@ -52,7 +52,6 @@ export async function getOrdersByEmail(email: string): Promise<Order[]> {
 
 export async function cancelCheckoutOrder(
   orderId?: string | null,
-  cancelToken?: string | null,
   paypalOrderId?: string | null
 ): Promise<string | null> {
   const normalizedOrderId = orderId?.trim() || "";
@@ -66,7 +65,6 @@ export async function cancelCheckoutOrder(
       body: JSON.stringify({
         orderId: normalizedOrderId || undefined,
         paypalOrderId: normalizedPaypalOrderId || undefined,
-        cancelToken: cancelToken || undefined,
       }),
     },
     false

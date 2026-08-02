@@ -11,13 +11,11 @@ const PAYPAL_MAX_ATTEMPTS = 6;
 
 const recordCheckoutEvent = async ({
   orderId,
-  cancelToken,
   event,
   provider,
   context,
 }: {
   orderId: string;
-  cancelToken: string;
   event: string;
   provider: "stripe" | "paypal";
   context?: Record<string, unknown>;
@@ -30,7 +28,6 @@ const recordCheckoutEvent = async ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId,
-          cancelToken,
           event,
           provider,
           context,
@@ -57,11 +54,10 @@ function CheckoutSuccessContent() {
   const searchParams = useSearchParams();
   const paypalToken = searchParams.get("token");
   const checkoutOrderId = searchParams.get("orderId");
-  const cancelToken = searchParams.get("cancelToken");
   const isPaypalReturn =
     searchParams.get("provider") === "paypal" || Boolean(paypalToken);
   const provider = isPaypalReturn ? "paypal" : "stripe";
-  const hasCheckoutToken = Boolean(checkoutOrderId && cancelToken);
+  const hasCheckoutToken = Boolean(checkoutOrderId);
   const [status, setStatus] = useState<"loading" | "success" | "error" | "pending">(
     isPaypalReturn ? (paypalToken ? "loading" : "error") : hasCheckoutToken ? "loading" : "pending"
   );
@@ -76,21 +72,20 @@ function CheckoutSuccessContent() {
   );
 
   useEffect(() => {
-    if (!checkoutOrderId || !cancelToken) return;
+    if (!checkoutOrderId) return;
 
     void recordCheckoutEvent({
       orderId: checkoutOrderId,
-      cancelToken,
       event: "browser_success_returned",
       provider,
       context: {
         hasPaypalToken: Boolean(paypalToken),
       },
     });
-  }, [cancelToken, checkoutOrderId, paypalToken, provider]);
+  }, [checkoutOrderId, paypalToken, provider]);
 
   useEffect(() => {
-    if (isPaypalReturn || !checkoutOrderId || !cancelToken) return;
+    if (isPaypalReturn || !checkoutOrderId) return;
 
     let isMounted = true;
     const verifyOrderStatus = async () => {
@@ -98,7 +93,6 @@ function CheckoutSuccessContent() {
       setError(null);
       void recordCheckoutEvent({
         orderId: checkoutOrderId,
-        cancelToken,
         event: "browser_status_check_started",
         provider: "stripe",
       });
@@ -109,7 +103,6 @@ function CheckoutSuccessContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             orderId: checkoutOrderId,
-            cancelToken,
           }),
         },
         false
@@ -149,7 +142,7 @@ function CheckoutSuccessContent() {
     return () => {
       isMounted = false;
     };
-  }, [cancelToken, checkoutOrderId, clear, isPaypalReturn]);
+  }, [checkoutOrderId, clear, isPaypalReturn]);
 
   useEffect(() => {
     if (!isPaypalReturn || !paypalToken) return;
@@ -172,7 +165,6 @@ function CheckoutSuccessContent() {
           body: JSON.stringify({
             orderId: paypalToken,
             checkoutOrderId: checkoutOrderId || undefined,
-            cancelToken: cancelToken || undefined,
           }),
         },
         true
@@ -226,7 +218,7 @@ function CheckoutSuccessContent() {
         clearTimeout(timeout);
       }
     };
-  }, [cancelToken, checkoutOrderId, clear, isPaypalReturn, paypalToken]);
+  }, [checkoutOrderId, clear, isPaypalReturn, paypalToken]);
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 text-center sm:gap-6">

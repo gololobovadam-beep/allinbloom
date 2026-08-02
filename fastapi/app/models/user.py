@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, Enum, String, func
+from sqlalchemy import Column, DateTime, Enum, Integer, String, func
 
 from app.core.database import Base
 from app.models.enums import Role
@@ -16,6 +16,7 @@ class User(Base):
     phone = Column(String, nullable=True)
     role = Column(Enum(Role, name="Role"), default=Role.CUSTOMER, nullable=False)
     image = Column(String, nullable=True)
+    auth_version = Column("authVersion", Integer, nullable=False, default=0, server_default="0")
     created_at = Column(
         "createdAt", DateTime(timezone=True), server_default=func.now(), nullable=False
     )

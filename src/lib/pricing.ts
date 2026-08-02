@@ -43,10 +43,19 @@ const hasCategoryFilters = (settings: CategorySettings) =>
 const matchesCategory = (
   bouquet: Pick<
     Bouquet,
-    "flowerType" | "isMixed" | "bouquetType" | "colors" | "priceCents"
+    | "catalogType"
+    | "flowerType"
+    | "isMixed"
+    | "bouquetType"
+    | "colors"
+    | "priceCents"
   >,
   settings: CategorySettings
 ) => {
+  // Category rules are configured with flower attributes, so the same rule
+  // must not accidentally discount a Gift or Balloon that uses neutral legacy
+  // flower fields on the shared product table.
+  if (bouquet.catalogType && bouquet.catalogType !== "FLOWERS") return false;
   if (settings.categoryDiscountPercent <= 0) return false;
   if (!hasCategoryFilters(settings)) return false;
 
@@ -107,6 +116,7 @@ export const getBouquetDiscount = (
     Bouquet,
     | "discountPercent"
     | "discountNote"
+    | "catalogType"
     | "flowerType"
     | "isMixed"
     | "bouquetType"
@@ -115,6 +125,8 @@ export const getBouquetDiscount = (
   >,
   settings: CategorySettings & GlobalSettings
 ): DiscountInfo | null => {
+  if (bouquet.catalogType === "EVENT_SPACE") return null;
+
   if (bouquet.discountPercent > 0) {
     return {
       percent: bouquet.discountPercent,
@@ -148,6 +160,7 @@ export const getBouquetPricing = (
     | "priceCents"
     | "discountPercent"
     | "discountNote"
+    | "catalogType"
     | "flowerType"
     | "isMixed"
     | "bouquetType"
@@ -176,9 +189,15 @@ export const getCartItemDiscount = (
     isMixed?: boolean;
     bouquetType?: string;
     colors?: string;
+    catalogType?: Bouquet["catalogType"];
+    isCustom?: boolean;
   },
   settings: CategorySettings & GlobalSettings
 ): DiscountInfo | null => {
+  // Florist Choice pricing is separately validated by checkout and does not
+  // inherit catalog-wide discounts. Keep the cart total aligned with it.
+  if (item.isCustom) return null;
+
   if (item.bouquetDiscountPercent && item.bouquetDiscountPercent > 0) {
     return {
       percent: item.bouquetDiscountPercent,
@@ -190,6 +209,7 @@ export const getCartItemDiscount = (
   if (
     matchesCategory(
       {
+        catalogType: item.catalogType,
         flowerType: (item.flowerType || "") as Bouquet["flowerType"],
         isMixed: Boolean(item.isMixed),
         bouquetType: (item.bouquetType || "").toUpperCase() as Bouquet["bouquetType"],

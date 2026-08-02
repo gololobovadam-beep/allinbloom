@@ -8,8 +8,6 @@ type CheckoutResponseData = {
   url?: string;
   orderId?: string;
   order_id?: string;
-  cancelToken?: string;
-  cancel_token?: string;
   provider?: "stripe" | "paypal";
   error?: string;
   detail?: string;
@@ -22,8 +20,7 @@ const recordCheckoutEvent = async (
   fallbackProvider: "stripe" | "paypal"
 ) => {
   const orderId = data.orderId || data.order_id;
-  const cancelToken = data.cancelToken || data.cancel_token;
-  if (!orderId || !cancelToken) return;
+  if (!orderId) return;
 
   try {
     await clientFetch(
@@ -33,7 +30,6 @@ const recordCheckoutEvent = async (
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId,
-          cancelToken,
           event,
           provider: data.provider || fallbackProvider,
           context: {

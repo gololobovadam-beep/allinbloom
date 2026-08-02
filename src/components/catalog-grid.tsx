@@ -2,8 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BouquetCard from "@/components/bouquet-card";
+import ProductCard, {
+  type EditorialProductKind,
+} from "@/components/product-card";
 import type { CatalogItem } from "@/lib/api-types";
 import type { CatalogSearchParams } from "@/lib/data/bouquets";
+
+export type CatalogGridVariant = "bouquet" | EditorialProductKind;
 
 type CatalogGridProps = {
   initialItems: CatalogItem[];
@@ -14,6 +19,9 @@ type CatalogGridProps = {
     percent: number;
     note: string;
   } | null;
+  cardVariant?: CatalogGridVariant;
+  emptyMessage?: string;
+  productLabel?: string;
 };
 
 const MOBILE_PAGE_SIZE = 6;
@@ -41,6 +49,10 @@ export default function CatalogGrid({
   filters,
   filtersKey,
   firstOrderDiscount,
+  cardVariant = "bouquet",
+  emptyMessage =
+    "No bouquets match these filters. Try a softer palette or wider price range.",
+  productLabel = "bouquets",
 }: CatalogGridProps) {
   const [items, setItems] = useState<CatalogItem[]>(initialItems);
   const [cursor, setCursor] = useState<string | null>(initialCursor);
@@ -60,6 +72,7 @@ export default function CatalogGrid({
 
   const baseParams = useMemo(() => {
     const params = new URLSearchParams();
+    if (filters.catalogType) params.set("catalogType", filters.catalogType);
     if (filters.filter) params.set("filter", filters.filter);
     if (filters.flower) params.set("flower", filters.flower);
     if (filters.color) params.set("color", filters.color);
@@ -70,6 +83,7 @@ export default function CatalogGrid({
     return params;
   }, [
     filters.bouquetType,
+    filters.catalogType,
     filters.color,
     filters.filter,
     filters.flower,
@@ -96,7 +110,7 @@ export default function CatalogGrid({
       });
 
       if (!response.ok) {
-        throw new Error("Failed to load more bouquets.");
+        throw new Error("Failed to load more catalog products.");
       }
 
       const data = (await response.json()) as {
@@ -108,7 +122,7 @@ export default function CatalogGrid({
       setCursor(data.nextCursor);
       setHasMore(Boolean(data.nextCursor));
     } catch {
-      setError("Unable to load more bouquets right now.");
+      setError("Unable to load more products right now.");
     } finally {
       setIsLoading(false);
     }
@@ -135,30 +149,45 @@ export default function CatalogGrid({
   if (!items.length) {
     return (
       <div className="glass rounded-[28px] border border-white/80 p-8 text-center text-sm text-stone-600">
-        No bouquets match these filters. Try a softer palette or wider price
-        range.
+        {emptyMessage}
       </div>
     );
   }
 
   return (
     <div className="relative z-0 space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div
+        className={
+          cardVariant === "bouquet"
+            ? "grid grid-cols-2 gap-3 sm:gap-6 md:grid-cols-2 lg:grid-cols-3"
+            : "space-y-5 sm:space-y-6"
+        }
+      >
         {items.map((entry) => (
-          <BouquetCard
-            key={entry.bouquet.id}
-            bouquet={entry.bouquet}
-            pricing={entry.pricing}
-            firstOrderDiscount={firstOrderDiscount}
-            enableFlowerQuantityInput
-            splitPriceRows
-          />
+          cardVariant === "bouquet" ? (
+            <BouquetCard
+              key={entry.bouquet.id}
+              bouquet={entry.bouquet}
+              pricing={entry.pricing}
+              firstOrderDiscount={firstOrderDiscount}
+              enableFlowerQuantityInput={filters.catalogType !== "BALOONS"}
+              splitPriceRows
+            />
+          ) : (
+            <ProductCard
+              key={entry.bouquet.id}
+              product={entry.bouquet}
+              kind={cardVariant}
+              pricing={entry.pricing}
+              firstOrderDiscount={firstOrderDiscount}
+            />
+          )
         ))}
       </div>
       <div className="flex flex-col items-center gap-2 text-xs uppercase tracking-[0.22em] text-stone-500 sm:tracking-[0.3em]">
         {hasMore ? (
           <>
-            <span>{isLoading ? "Loading more bouquets" : "Scroll for more"}</span>
+            <span>{isLoading ? `Loading more ${productLabel}` : "Scroll for more"}</span>
             <div
               ref={sentinelRef}
               className="h-6 w-full"
@@ -166,7 +195,7 @@ export default function CatalogGrid({
             />
           </>
         ) : (
-          <span>All bouquets loaded</span>
+          <span>All {productLabel} loaded</span>
         )}
         {error ? (
           <span className="text-[11px] uppercase tracking-[0.22em] text-rose-500">

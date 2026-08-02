@@ -3,6 +3,8 @@
 import { useFormStatus } from "react-dom";
 import type { StoreSettings } from "@/lib/api-types";
 import AdminImageUpload from "@/components/admin-image-upload";
+import AdminImageList from "@/components/admin-image-list";
+import { getHomeGalleryImages } from "@/lib/home-images";
 
 type AdminHomeImagesFormProps = {
   settings: StoreSettings;
@@ -44,53 +46,14 @@ export default function AdminHomeImagesForm({
       </div>
 
       <div className="space-y-4">
-        <h2 className="text-lg font-semibold text-stone-900">
-          Atelier gallery images
-        </h2>
-        <div className="grid gap-6 lg:grid-cols-2">
-          <AdminImageUpload
-            name="homeGalleryImage1"
-            urlLabel="Gallery image 1 URL"
-            previewAlt="Homepage gallery image 1 preview"
-            defaultValue={settings.homeGalleryImage1}
-            recommendedSize="1000x1000"
-          />
-          <AdminImageUpload
-            name="homeGalleryImage2"
-            urlLabel="Gallery image 2 URL"
-            previewAlt="Homepage gallery image 2 preview"
-            defaultValue={settings.homeGalleryImage2}
-            recommendedSize="1000x1000"
-          />
-          <AdminImageUpload
-            name="homeGalleryImage3"
-            urlLabel="Gallery image 3 URL"
-            previewAlt="Homepage gallery image 3 preview"
-            defaultValue={settings.homeGalleryImage3}
-            recommendedSize="1000x1000"
-          />
-          <AdminImageUpload
-            name="homeGalleryImage4"
-            urlLabel="Gallery image 4 URL"
-            previewAlt="Homepage gallery image 4 preview"
-            defaultValue={settings.homeGalleryImage4}
-            recommendedSize="1000x1000"
-          />
-          <AdminImageUpload
-            name="homeGalleryImage5"
-            urlLabel="Gallery image 5 URL"
-            previewAlt="Homepage gallery image 5 preview"
-            defaultValue={settings.homeGalleryImage5}
-            recommendedSize="1000x1000"
-          />
-          <AdminImageUpload
-            name="homeGalleryImage6"
-            urlLabel="Gallery image 6 URL"
-            previewAlt="Homepage gallery image 6 preview"
-            defaultValue={settings.homeGalleryImage6}
-            recommendedSize="1000x1000"
-          />
-        </div>
+        <AdminImageList
+          name="homeGalleryImages"
+          initialImages={getHomeGalleryImages(settings)}
+          title="Atelier gallery images"
+          description="Add any number of images and use the arrows to choose their order. Only the first six are displayed on the homepage."
+          previewAlt="Homepage gallery image"
+          recommendedSize="1000x1000"
+        />
       </div>
 
       <div className="space-y-4">

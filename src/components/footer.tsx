@@ -1,4 +1,5 @@
 import Link from "next/link";
+import FooterLegal from "@/components/footer-legal";
 
 export default function Footer() {
   return (
@@ -18,7 +19,16 @@ export default function Footer() {
             Boutique
           </p>
           <Link href="/catalog" className="block hover:text-stone-800">
-            Catalog
+            Flowers
+          </Link>
+          <Link href="/balloons" className="block hover:text-stone-800">
+            Balloons
+          </Link>
+          <Link href="/gifts-balloons" className="block hover:text-stone-800">
+            Gifts
+          </Link>
+          <Link href="/event-space" className="block hover:text-stone-800">
+            Event space
           </Link>
           <Link href="/reviews" className="block hover:text-stone-800">
             Reviews
@@ -45,6 +55,7 @@ export default function Footer() {
             (c) {new Date().getFullYear()} All in Bloom Floral Studio. All rights
             reserved.
           </p>
+          <FooterLegal />
           <a
             href="https://t.me/otdamgololobov"
             target="_blank"

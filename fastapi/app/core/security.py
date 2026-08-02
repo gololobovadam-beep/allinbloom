@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from hmac import compare_digest
 from hashlib import sha256
-from secrets import randbelow, token_hex
+import re
+from secrets import randbelow, token_hex, token_urlsafe
 from typing import Any
 
 from jose import jwt
@@ -13,7 +14,12 @@ from app.core.config import settings
 
 ALGORITHM = "HS256"
 OTP_TTL_MINUTES = 10
-CHECKOUT_CANCEL_TOKEN_TTL_HOURS = 24
+# Checkout access is held in an HttpOnly, order-bound cookie so a browser
+# history entry, referrer, analytics script, or payment provider never sees a
+# bearer credential.
+CHECKOUT_ACCESS_TOKEN_TTL_HOURS = 2
+GOOGLE_OAUTH_STATE_TTL_MINUTES = 10
+_SAFE_ORDER_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def _encode_token(subject: dict[str, Any], expires_delta: timedelta, token_type: str) -> str:
@@ -56,23 +62,63 @@ def decode_refresh_token(token: str) -> dict[str, Any]:
     return _decode_token(token, "refresh")
 
 
-def create_checkout_cancel_token(
-    *, order_id: str, email: str, expires_hours: int | None = None
+def checkout_access_cookie_name(order_id: str) -> str:
+    """Return a safe, per-order cookie name without reflecting user input."""
+    normalized_order_id = (order_id or "").strip()
+    if not _SAFE_ORDER_ID.fullmatch(normalized_order_id):
+        raise ValueError("Invalid order id")
+    return f"aib_checkout_{normalized_order_id}"
+
+
+def create_checkout_access_token(
+    *, order_id: str, expires_hours: int | None = None
 ) -> str:
-    ttl_hours = expires_hours or CHECKOUT_CANCEL_TOKEN_TTL_HOURS
-    subject = {"order_id": order_id, "email": email.strip().lower()}
-    return _encode_token(subject, timedelta(hours=ttl_hours), "checkout_cancel")
+    normalized_order_id = (order_id or "").strip()
+    checkout_access_cookie_name(normalized_order_id)
+    ttl_hours = expires_hours or CHECKOUT_ACCESS_TOKEN_TTL_HOURS
+    return _encode_token(
+        {"order_id": normalized_order_id},
+        timedelta(hours=ttl_hours),
+        "checkout_access",
+    )
 
 
-def decode_checkout_cancel_token(token: str) -> dict[str, Any]:
-    payload = _decode_token(token, "checkout_cancel")
+def decode_checkout_access_token(token: str) -> dict[str, Any]:
+    payload = _decode_token(token, "checkout_access")
     order_id = payload.get("order_id")
-    email = payload.get("email")
-    if not isinstance(order_id, str) or not order_id.strip():
-        raise ValueError("Invalid checkout token: missing order_id")
-    if not isinstance(email, str) or "@" not in email:
-        raise ValueError("Invalid checkout token: missing email")
-    return {"order_id": order_id.strip(), "email": email.strip().lower()}
+    if not isinstance(order_id, str):
+        raise ValueError("Invalid checkout access token")
+    normalized_order_id = order_id.strip()
+    checkout_access_cookie_name(normalized_order_id)
+    return {"order_id": normalized_order_id}
+
+
+def create_google_oauth_state_token(
+    *, expires_minutes: int | None = None
+) -> str:
+    """Create a short-lived, signed OAuth state value for one browser flow."""
+    ttl_minutes = expires_minutes or GOOGLE_OAUTH_STATE_TTL_MINUTES
+    return _encode_token(
+        {"nonce": token_urlsafe(32)},
+        timedelta(minutes=ttl_minutes),
+        "google_oauth_state",
+    )
+
+
+def validate_google_oauth_state_token(
+    *, received_state: str | None, expected_state: str | None
+) -> bool:
+    """Require a matching HttpOnly cookie value and a valid signed state token."""
+    received = (received_state or "").strip()
+    expected = (expected_state or "").strip()
+    if not received or not expected or not compare_digest(received, expected):
+        return False
+    try:
+        payload = _decode_token(received, "google_oauth_state")
+    except Exception:
+        return False
+    nonce = payload.get("nonce")
+    return isinstance(nonce, str) and len(nonce) >= 32
 
 
 def generate_otp() -> dict[str, str | datetime]:

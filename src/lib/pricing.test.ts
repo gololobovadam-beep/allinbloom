@@ -167,6 +167,22 @@ describe("getBouquetDiscount", () => {
     });
   });
 
+  it("does not apply flower-category discounts to gifts or balloons", () => {
+    const settings = makeSettings({
+      categoryDiscountPercent: 20,
+      categoryMixed: "mono",
+      globalDiscountPercent: 5,
+      globalDiscountNote: "Storewide",
+    });
+
+    expect(
+      getBouquetDiscount({ ...baseBouquet, catalogType: "GIFTS" }, settings)
+    ).toEqual({ percent: 5, note: "Storewide", source: "global" });
+    expect(
+      getBouquetDiscount({ ...baseBouquet, catalogType: "BALOONS" }, settings)
+    ).toEqual({ percent: 5, note: "Storewide", source: "global" });
+  });
+
   it("returns null when no discounts are active", () => {
     expect(getBouquetDiscount(baseBouquet, makeSettings())).toBeNull();
   });
@@ -257,5 +273,36 @@ describe("pricing composition", () => {
       note: "Discount",
       source: "category",
     });
+  });
+
+  it("keeps cart discounts consistent for non-flower and custom items", () => {
+    const settings = makeSettings({
+      categoryDiscountPercent: 12,
+      categoryMixed: "mono",
+      globalDiscountPercent: 5,
+      globalDiscountNote: "Storewide",
+    });
+
+    expect(
+      getCartItemDiscount(
+        {
+          basePriceCents: 10000,
+          catalogType: "GIFTS",
+          bouquetType: "MONO",
+        },
+        settings
+      )
+    ).toEqual({ percent: 5, note: "Storewide", source: "global" });
+
+    expect(
+      getCartItemDiscount(
+        {
+          basePriceCents: 10000,
+          isCustom: true,
+          bouquetDiscountPercent: 20,
+        },
+        settings
+      )
+    ).toBeNull();
   });
 });

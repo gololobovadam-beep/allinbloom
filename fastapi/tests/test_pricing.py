@@ -164,6 +164,27 @@ class PricingTests(unittest.TestCase):
         self.assertEqual(discount.percent, 11)
         self.assertEqual(discount.source, "category")
 
+    def test_get_cart_item_discount_never_applies_flower_category_to_gifts(self):
+        settings = make_settings(
+            category_discount_percent=11,
+            category_flower_type="ROSE",
+            category_mixed="mono",
+            category_color="red",
+        )
+        discount = get_cart_item_discount(
+            {
+                "base_price_cents": 10000,
+                "catalog_type": "GIFTS",
+                # These values mirror the neutral legacy product fields used
+                # by the shared product table and must not qualify a gift.
+                "flower_type": "ROSE",
+                "is_mixed": False,
+                "colors": "Deep RED",
+            },
+            settings,
+        )
+        self.assertIsNone(discount)
+
     def test_get_cart_item_discount_can_match_season_category(self):
         settings = make_settings(
             category_discount_percent=11,

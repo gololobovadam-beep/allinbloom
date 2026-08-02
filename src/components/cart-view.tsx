@@ -1227,6 +1227,8 @@ export default function CartView({
           isMixed: item.meta?.isMixed,
           bouquetType: item.meta?.bouquetType,
           colors: item.meta?.bouquetColors,
+          catalogType: item.meta?.catalogType,
+          isCustom: item.meta?.isCustom,
         },
         {
           globalDiscountPercent: globalDiscount?.percent || 0,

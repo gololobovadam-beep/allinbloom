@@ -25,6 +25,15 @@ class BouquetType(str, Enum):
     SEASON = "SEASON"
 
 
+class CatalogType(str, Enum):
+    """Top-level catalog a stored product belongs to."""
+
+    FLOWERS = "FLOWERS"
+    BALOONS = "BALOONS"
+    GIFTS = "GIFTS"
+    EVENT_SPACE = "EVENT_SPACE"
+
+
 class OrderStatus(str, Enum):
     PENDING = "PENDING"
     PAID = "PAID"

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import SignOutButton from "@/components/sign-out-button";
 import AdminOrdersBadge from "@/components/admin-orders-badge";
 import AdminReviewsBadge from "@/components/admin-reviews-badge";
 
@@ -18,6 +17,24 @@ export default function AdminSidebar() {
           className="flex h-11 items-center rounded-2xl border border-transparent bg-white/70 px-3 transition hover:border-stone-200"
         >
           Bouquets
+        </Link>
+        <Link
+          href="/admin/balloons"
+          className="flex h-11 items-center rounded-2xl border border-transparent bg-white/70 px-3 transition hover:border-stone-200"
+        >
+          Balloons
+        </Link>
+        <Link
+          href="/admin/gifts"
+          className="flex h-11 items-center rounded-2xl border border-transparent bg-white/70 px-3 transition hover:border-stone-200"
+        >
+          Gifts
+        </Link>
+        <Link
+          href="/admin/event-space"
+          className="flex h-11 items-center rounded-2xl border border-transparent bg-white/70 px-3 transition hover:border-stone-200"
+        >
+          Event space
         </Link>
         <Link
           href="/admin/orders"
@@ -58,9 +75,6 @@ export default function AdminSidebar() {
           View storefront
         </Link>
       </nav>
-      <div className="mt-6">
-        <SignOutButton />
-      </div>
     </aside>
   );
 }

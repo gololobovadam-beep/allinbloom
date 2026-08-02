@@ -185,8 +185,10 @@ export default async function CatalogPage({
   const { user } = await getAuthSession();
   const email = user?.email || null;
   const orders = email ? await getOrdersByEmail(email) : [];
+  // First-order discounts are verified-account only on the backend to keep
+  // the promotion race-safe; do not advertise a guest-only price here.
   const isFirstOrderEligible = Boolean(
-    user ? email && isFirstOrderEligibleForKnownHistory(orders) : true
+    email && isFirstOrderEligibleForKnownHistory(orders)
   );
   const firstOrderDiscount =
     isFirstOrderEligible && settings.firstOrderDiscountPercent > 0

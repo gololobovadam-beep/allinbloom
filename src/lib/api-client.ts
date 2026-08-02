@@ -1,6 +1,6 @@
 "use client";
 
-import { getUsableAuthToken, refreshAuthSession } from "@/lib/auth-client";
+import { refreshAuthSession } from "@/lib/auth-client";
 
 export const clientFetch = async (
   path: string,
@@ -15,12 +15,6 @@ export const clientFetch = async (
     });
 
   const headers = new Headers(options.headers);
-  if (auth) {
-    const token = await getUsableAuthToken();
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-  }
 
   const response = await makeRequest(headers);
   if (!auth || response.status !== 401) {
@@ -28,11 +22,9 @@ export const clientFetch = async (
   }
 
   const refreshed = await refreshAuthSession();
-  if (!refreshed?.token) {
+  if (!refreshed) {
     return response;
   }
 
-  const retryHeaders = new Headers(options.headers);
-  retryHeaders.set("Authorization", `Bearer ${refreshed.token}`);
-  return makeRequest(retryHeaders);
+  return makeRequest(new Headers(options.headers));
 };

@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/upload", tags=["upload"])
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
+MAX_MULTIPART_BODY_BYTES = MAX_IMAGE_SIZE_BYTES + 128 * 1024
 REVIEW_UPLOAD_WINDOW = timedelta(minutes=30)
 REVIEW_UPLOAD_LIMIT = 20
 review_upload_rate_limit: dict[str, dict[str, object]] = {}
@@ -45,13 +46,37 @@ def _allow_review_upload(key: str) -> bool:
     return True
 
 
+def _detected_image_content_type(content: bytes) -> str | None:
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _reject_oversized_multipart(request: Request) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_MULTIPART_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="File is too large")
+
+
 async def _read_and_validate_file(file: UploadFile) -> bytes:
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
+    content_type = (file.content_type or "").lower().strip()
+    if content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    content = await file.read()
+    # Read only one byte beyond the limit.  Do not let a spoofed multipart
+    # request allocate an unbounded bytes object before validating it.
+    content = await file.read(MAX_IMAGE_SIZE_BYTES + 1)
     if len(content) > MAX_IMAGE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File is too large")
+    detected_content_type = _detected_image_content_type(content)
+    if detected_content_type != content_type:
+        raise HTTPException(status_code=400, detail="File contents do not match its image type")
 
     return content
 
@@ -88,12 +113,14 @@ async def _upload_to_cloudinary(
 
 @router.post("", response_model=UploadResponse)
 async def upload_image(
+    request: Request,
     file: UploadFile = File(...),
     max_width: int | None = Form(None),
     max_height: int | None = Form(None),
     format: str | None = Form(None),
     _admin=Depends(require_admin),
 ):
+    _reject_oversized_multipart(request)
     content = await _read_and_validate_file(file)
     return await _upload_to_cloudinary(
         file, content, max_width=max_width, max_height=max_height, fmt=format
@@ -108,6 +135,7 @@ async def upload_review_image(
     max_height: int | None = Form(None),
     format: str | None = Form(None),
 ):
+    _reject_oversized_multipart(request)
     key = _get_client_key(request)
     if not _allow_review_upload(key):
         log_critical_event(

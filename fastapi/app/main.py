@@ -21,22 +21,28 @@ from app.api.routes import (
 )
 from app.core.config import settings
 from app.core.critical_logging import infer_domain_from_path, log_critical_event, setup_critical_logging
+from app.core.request_size_limit import RequestBodyLimitMiddleware
 
 setup_critical_logging()
 
 app = FastAPI(title="All in Bloom FastAPI")
 
+# Install the stream limiter before request parsing. CORS is added afterward
+# so browser clients also receive CORS headers on early 413 responses.
+app.add_middleware(RequestBodyLimitMiddleware)
+
 origins = [
     settings.resolved_site_url(),
-    "http://localhost:3000",
 ]
+if settings.is_development():
+    origins.append("http://localhost:3000")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(dict.fromkeys(origins)),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 app.include_router(auth_router)
@@ -73,8 +79,7 @@ async def log_unhandled_exceptions(request: Request, call_next):
 
 @app.on_event("startup")
 def validate_runtime_config() -> None:
-    if not settings.resolved_auth_secret():
-        raise RuntimeError("AUTH_SECRET must be configured for non-development environments.")
+    settings.validate_runtime_configuration()
 
 
 @app.get("/health")

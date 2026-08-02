@@ -8,6 +8,7 @@ import { getGoogleRedirectUri } from "@/lib/google-auth";
 
 type GoogleCodeResponse = {
   code?: string;
+  state?: string;
   error?: string;
 };
 
@@ -22,6 +23,7 @@ type GoogleAccountsOauth2 = {
     ux_mode?: "popup" | "redirect";
     callback?: (response: GoogleCodeResponse) => void;
     redirect_uri?: string;
+    state?: string;
     error_callback?: () => void;
   }) => GoogleCodeClient;
 };
@@ -38,6 +40,20 @@ const GOOGLE_SCOPE = "openid email profile";
 const isMobileBrowser = () => {
   if (typeof navigator === "undefined") return false;
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+};
+
+const requestGoogleOauthState = async () => {
+  const response = await clientFetch("/api/auth/google/state", {
+    method: "POST",
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | { state?: string; detail?: string }
+    | null;
+  const state = payload?.state?.trim();
+  if (!response.ok || !state) {
+    throw new Error(payload?.detail || "Unable to start Google sign-in.");
+  }
+  return state;
 };
 
 export default function AuthPanel() {
@@ -68,14 +84,13 @@ export default function AuthPanel() {
         return;
       }
 
-      const token = payload?.accessToken || payload?.access_token;
       const user = payload?.user;
-      if (!token || !user) {
+      if (!user) {
         setStatus(fallbackMessage);
         return;
       }
 
-      setAuthSession(token, user);
+      setAuthSession(user);
       window.location.href = "/";
     },
     []
@@ -86,11 +101,20 @@ export default function AuthPanel() {
     return google?.accounts?.oauth2 || null;
   }, []);
 
-  const startGoogleRedirectSignIn = useCallback(() => {
+  const startGoogleRedirectSignIn = useCallback(async () => {
     const googleOauth2 = getGoogleOauth2();
     if (!googleOauth2) {
       setGoogleBusy(false);
       setStatus("Google sign-in is not ready yet. Refresh and try again.");
+      return;
+    }
+
+    let state: string;
+    try {
+      state = await requestGoogleOauthState();
+    } catch {
+      setGoogleBusy(false);
+      setStatus("Unable to start Google sign-in. Please try again.");
       return;
     }
 
@@ -101,6 +125,7 @@ export default function AuthPanel() {
         scope: GOOGLE_SCOPE,
         ux_mode: "redirect",
         redirect_uri: redirectUri,
+        state,
       });
       codeClient.requestCode();
     } catch {
@@ -109,7 +134,7 @@ export default function AuthPanel() {
     }
   }, [getGoogleOauth2, googleClientId]);
 
-  const requestGoogleSignIn = useCallback(() => {
+  const requestGoogleSignIn = useCallback(async () => {
     const googleOauth2 = getGoogleOauth2();
     if (!googleOauth2) {
       setStatus("Google sign-in is not ready yet. Refresh and try again.");
@@ -120,37 +145,39 @@ export default function AuthPanel() {
     setStatus("Opening Google sign-in...");
 
     if (isMobileBrowser()) {
-      startGoogleRedirectSignIn();
+      void startGoogleRedirectSignIn();
       return;
     }
 
     try {
+      const state = await requestGoogleOauthState();
       const codeClient = googleOauth2.initCodeClient({
         client_id: googleClientId,
         scope: GOOGLE_SCOPE,
         ux_mode: "popup",
+        state,
         callback: (response) => {
-          if (response?.error || !response?.code) {
+          if (response?.error || !response?.code || response.state !== state) {
             setStatus("Continuing Google sign-in in this tab...");
-            startGoogleRedirectSignIn();
+            void startGoogleRedirectSignIn();
             return;
           }
           setGoogleBusy(false);
           void completeGoogleSignIn(
             "/api/auth/google/code",
-            { code: response.code },
+            { code: response.code, state },
             "Unable to sign in with Google."
           );
         },
         error_callback: () => {
           setStatus("Continuing Google sign-in in this tab...");
-          startGoogleRedirectSignIn();
+          void startGoogleRedirectSignIn();
         },
       });
       codeClient.requestCode();
     } catch {
-      setStatus("Continuing Google sign-in in this tab...");
-      startGoogleRedirectSignIn();
+      setStatus("Unable to start Google sign-in. Please try again.");
+      setGoogleBusy(false);
     }
   }, [
     completeGoogleSignIn,
@@ -270,13 +297,12 @@ export default function AuthPanel() {
       return;
     }
 
-    const token = payload?.accessToken || payload?.access_token;
     const user = payload?.user;
-    if (!token || !user) {
+    if (!user) {
       setStatus("Unable to sign in.");
       return;
     }
-    setAuthSession(token, user);
+    setAuthSession(user);
     window.location.href = "/";
   };
 
@@ -365,7 +391,7 @@ export default function AuthPanel() {
           </div>
           <button
             type="button"
-            onClick={requestGoogleSignIn}
+            onClick={() => void requestGoogleSignIn()}
             disabled={!googleReady || googleBusy}
             className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-stone-200 bg-white/80 px-4 py-3 text-xs uppercase tracking-[0.24em] text-stone-600 disabled:opacity-50"
           >

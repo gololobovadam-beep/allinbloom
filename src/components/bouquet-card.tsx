@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { formatLabel, formatMoney } from "@/lib/format";
 import AddToCartControls from "@/components/add-to-cart-controls";
 import BouquetImageCarousel from "@/components/bouquet-image-carousel";
 import type { Bouquet, BouquetPricing } from "@/lib/api-types";
-import { getBouquetGalleryImages } from "@/lib/bouquet-images";
+import { getVisibleBouquetGalleryImages } from "@/lib/bouquet-images";
 import { FLOWER_TYPES } from "@/lib/constants";
 import { applyPercentDiscount } from "@/lib/pricing";
 import {
@@ -31,7 +31,8 @@ export default function BouquetCard({
   enableFlowerQuantityInput?: boolean;
   splitPriceRows?: boolean;
 }) {
-  const galleryImages = getBouquetGalleryImages(bouquet);
+  const galleryImages = getVisibleBouquetGalleryImages(bouquet);
+  const isBalloon = bouquet.catalogType === "BALOONS";
   const selectableSet = new Set<string>(FLOWER_TYPES);
   const parsedFlowerTypes = String(bouquet.style || "")
     .split(",")
@@ -64,7 +65,19 @@ export default function BouquetCard({
   const defaultFlowerQuantity = clampFlowerQuantity(
     Number(bouquet.defaultFlowerQuantity || FLOWER_QUANTITY_MIN)
   );
-  const [flowerQuantity, setFlowerQuantity] = useState(defaultFlowerQuantity);
+  const [flowerQuantityState, setFlowerQuantityState] = useState(() => ({
+    bouquetId: bouquet.id,
+    defaultQuantity: defaultFlowerQuantity,
+    value: defaultFlowerQuantity,
+  }));
+  // Product data can be refreshed in place. Until the shopper changes the
+  // input again, display the refreshed default without scheduling a second
+  // render solely to copy a prop into state.
+  const flowerQuantity =
+    flowerQuantityState.bouquetId === bouquet.id &&
+    flowerQuantityState.defaultQuantity === defaultFlowerQuantity
+      ? flowerQuantityState.value
+      : defaultFlowerQuantity;
   const isSoldOut = bouquet.isSoldOut;
   const isFlowerQuantityEnabled = useMemo(
     () =>
@@ -81,10 +94,6 @@ export default function BouquetCard({
       isSoldOut,
     ]
   );
-
-  useEffect(() => {
-    setFlowerQuantity(defaultFlowerQuantity);
-  }, [defaultFlowerQuantity, bouquet.id]);
 
   const appliedDiscount = pricing.discount || firstOrderDiscount;
   const discountedUnitPriceCents = pricing.discount
@@ -119,12 +128,25 @@ export default function BouquetCard({
       </div>
       <div className="min-w-0 flex-1 space-y-1.5 sm:space-y-2">
         <div className="flex items-end justify-between gap-2 text-stone-500 uppercase">
-          <span className={`min-w-0 truncate ${flowerTypeTextClass}`}>
-            {flowerTypeLabel}
-          </span>
-          <span className="shrink-0 text-[10px] tracking-[0.16em] sm:text-xs sm:tracking-[0.24em]">
-            {bouquetTypeDisplay}
-          </span>
+          {isBalloon ? (
+            <>
+              <span className="min-w-0 truncate text-[10px] tracking-[0.16em] sm:text-xs sm:tracking-[0.24em]">
+                Balloons
+              </span>
+              <span className="shrink-0 text-[10px] tracking-[0.16em] sm:text-xs sm:tracking-[0.24em]">
+                All
+              </span>
+            </>
+          ) : (
+            <>
+              <span className={`min-w-0 truncate ${flowerTypeTextClass}`}>
+                {flowerTypeLabel}
+              </span>
+              <span className="shrink-0 text-[10px] tracking-[0.16em] sm:text-xs sm:tracking-[0.24em]">
+                {bouquetTypeDisplay}
+              </span>
+            </>
+          )}
         </div>
         <h3 className="break-words text-base font-semibold leading-tight text-stone-900 sm:text-xl">
           {bouquet.name}
@@ -149,7 +171,11 @@ export default function BouquetCard({
             value={flowerQuantity}
             onChange={(event) => {
               const next = Number(event.target.value);
-              setFlowerQuantity(clampFlowerQuantity(next));
+              setFlowerQuantityState({
+                bouquetId: bouquet.id,
+                defaultQuantity: defaultFlowerQuantity,
+                value: clampFlowerQuantity(next),
+              });
             }}
             className="h-8 w-16 rounded-xl border border-stone-200 bg-white px-2 text-right text-xs font-semibold text-stone-800 outline-none focus:border-stone-400 max-[410px]:w-14 max-[410px]:px-1.5 max-[410px]:text-[11px] sm:w-20 sm:text-sm"
           />
@@ -225,6 +251,7 @@ export default function BouquetCard({
             colors: bouquet.colors,
             isMixed: bouquet.isMixed,
             bouquetType: bouquet.bouquetType,
+            catalogType: bouquet.catalogType || "FLOWERS",
             isFlowerQuantityEnabled,
           }}
         />

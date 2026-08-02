@@ -2,11 +2,18 @@ import Link from "next/link";
 import Image from "next/image";
 import { getAuthSession } from "@/lib/auth-session";
 import CartBadge from "@/components/cart-badge";
-import AdminAlertsBadge from "@/components/admin-alerts-badge";
+
+const navigationItems = [
+  { href: "/catalog", label: "FLOWERS" },
+  { href: "/balloons", label: "BALOONS" },
+  { href: "/gifts-balloons", label: "GIFTS" },
+  { href: "/event-space", label: "EVENT SPACE" },
+  { href: "/reviews", label: "REVIEWS" },
+  { href: "/contact", label: "CONTACT" },
+];
 
 export default async function Header() {
   const { user } = await getAuthSession();
-  const isAdmin = user?.role === "ADMIN";
   const isSignedIn = Boolean(user);
 
   return (
@@ -25,25 +32,12 @@ export default async function Header() {
                 className="h-11 w-auto sm:h-12"
               />
             </Link>
-            <nav className="hidden items-center gap-4 text-xs uppercase tracking-[0.28em] text-stone-500 md:flex">
-              <Link href="/catalog" className="hover:text-stone-700">
-                Catalog
-              </Link>
-              <Link href="/reviews" className="hover:text-stone-700">
-                Reviews
-              </Link>
-              <Link href="/contact" className="hover:text-stone-700">
-                Contact
-              </Link>
-              {isAdmin ? (
-                <Link
-                  href="/admin"
-                  className="relative inline-flex items-center hover:text-stone-700"
-                >
-                  Admin
-                  <AdminAlertsBadge />
+            <nav className="hidden items-center gap-3 text-[10px] uppercase tracking-[0.2em] text-stone-500 xl:gap-4 xl:text-xs xl:tracking-[0.24em] lg:flex">
+              {navigationItems.map((item) => (
+                <Link key={item.href} href={item.href} className="whitespace-nowrap hover:text-stone-700">
+                  {item.label}
                 </Link>
-              ) : null}
+              ))}
             </nav>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
@@ -56,25 +50,12 @@ export default async function Header() {
             <CartBadge />
           </div>
         </div>
-        <nav className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] uppercase tracking-[0.22em] text-stone-500 sm:text-xs sm:tracking-[0.28em] md:hidden">
-          <Link href="/catalog" className="hover:text-stone-700">
-            Catalog
-          </Link>
-          <Link href="/reviews" className="hover:text-stone-700">
-            Reviews
-          </Link>
-          <Link href="/contact" className="hover:text-stone-700">
-            Contact
-          </Link>
-          {isAdmin ? (
-            <Link
-              href="/admin"
-              className="relative inline-flex items-center hover:text-stone-700"
-            >
-              Admin
-              <AdminAlertsBadge />
+        <nav className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] uppercase tracking-[0.18em] text-stone-500 sm:text-xs sm:tracking-[0.22em] lg:hidden">
+          {navigationItems.map((item) => (
+            <Link key={item.href} href={item.href} className="whitespace-nowrap hover:text-stone-700">
+              {item.label}
             </Link>
-          ) : null}
+          ))}
         </nav>
       </div>
     </header>

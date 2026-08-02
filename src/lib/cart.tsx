@@ -12,6 +12,7 @@ import {
   clampFlowerQuantity,
   FLOWER_QUANTITY_MIN,
 } from "@/lib/flower-quantity";
+import type { CatalogType } from "@/lib/api-types";
 
 export type CartItem = {
   id: string;
@@ -32,6 +33,7 @@ export type CartItem = {
     isMixed?: boolean;
     bouquetType?: string;
     bouquetColors?: string;
+    catalogType?: CatalogType;
     isFlowerQuantityEnabled?: boolean;
     flowerQuantityPerBouquet?: number;
     isCustom?: boolean;

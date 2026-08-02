@@ -11,14 +11,18 @@ from google.oauth2 import id_token
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import _reject_cross_site_cookie_request, get_db
 from app.core.config import settings
 from app.core.critical_logging import log_critical_event
+from app.core.rate_limit import SlidingWindowRateLimiter, enforce_rate_limit
 from app.core.security import (
+    GOOGLE_OAUTH_STATE_TTL_MINUTES,
     create_access_token,
+    create_google_oauth_state_token,
     create_refresh_token,
     decode_refresh_token,
     generate_otp,
+    validate_google_oauth_state_token,
     verify_otp,
 )
 from app.models.user import User
@@ -29,6 +33,9 @@ from app.services.email import send_otp_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+GOOGLE_OAUTH_STATE_COOKIE_NAME = "aib_google_oauth_state"
+GOOGLE_OAUTH_STATE_COOKIE_PATH = "/api/auth/google"
+otp_request_limiter = SlidingWindowRateLimiter(limit=20, window_seconds=15 * 60)
 
 
 def _cookie_secure() -> bool:
@@ -37,6 +44,22 @@ def _cookie_secure() -> bool:
 
 def _cookie_max_age() -> int:
     return max(1, settings.refresh_token_expire_days * 24 * 60 * 60)
+
+
+def _access_cookie_max_age() -> int:
+    return max(1, settings.access_token_expire_minutes * 60)
+
+
+def _set_access_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=settings.access_token_cookie_name,
+        value=token,
+        httponly=True,
+        secure=_cookie_secure(),
+        samesite=settings.resolved_refresh_cookie_samesite(),
+        path="/",
+        max_age=_access_cookie_max_age(),
+    )
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
@@ -61,13 +84,76 @@ def _clear_refresh_cookie(response: Response) -> None:
     )
 
 
-def _build_auth_response(response: Response, user: User) -> TokenOut:
-    token = create_access_token(
-        {"sub": user.id, "email": user.email, "role": user.role.value, "name": user.name or ""}
+def _clear_access_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.access_token_cookie_name,
+        path="/",
+        secure=_cookie_secure(),
+        httponly=True,
+        samesite=settings.resolved_refresh_cookie_samesite(),
     )
-    refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
+
+
+def _set_google_oauth_state_cookie(response: Response, state: str) -> None:
+    response.set_cookie(
+        key=GOOGLE_OAUTH_STATE_COOKIE_NAME,
+        value=state,
+        httponly=True,
+        secure=_cookie_secure(),
+        # OAuth returns through a top-level navigation.  Keep this cookie
+        # independent of the configurable session-cookie policy so it remains
+        # a same-site CSRF binding even if sessions need a different setting.
+        samesite="lax",
+        path=GOOGLE_OAUTH_STATE_COOKIE_PATH,
+        max_age=GOOGLE_OAUTH_STATE_TTL_MINUTES * 60,
+    )
+
+
+def _clear_google_oauth_state_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=GOOGLE_OAUTH_STATE_COOKIE_NAME,
+        path=GOOGLE_OAUTH_STATE_COOKIE_PATH,
+        secure=_cookie_secure(),
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def _google_oauth_error_response(status_code: int, detail: str) -> JSONResponse:
+    """Return an OAuth-code error while reliably consuming the state cookie.
+
+    FastAPI does not carry headers set on an injected ``Response`` through an
+    ``HTTPException``.  Build the error response directly so a failed token
+    exchange cannot leave a valid state cookie available for another attempt.
+    """
+    response = JSONResponse(status_code=status_code, content={"detail": detail})
+    _clear_google_oauth_state_cookie(response)
+    return response
+
+
+def _build_auth_response(response: Response, user: User, db: Session) -> TokenOut:
+    # A monotonic version gives logout and refresh server-side revocation.  A
+    # token copied before a rotation can no longer authenticate once the new
+    # version is committed.
+    user.auth_version = int(user.auth_version or 0) + 1
+    db.commit()
+    db.refresh(user)
+    subject = {
+        "sub": user.id,
+        "email": user.email,
+        "role": user.role.value,
+        "name": user.name or "",
+        "ver": user.auth_version,
+    }
+    token = create_access_token(
+        subject
+    )
+    refresh_token = create_refresh_token(
+        {"sub": user.id, "email": user.email, "ver": user.auth_version}
+    )
+    _set_access_cookie(response, token)
     _set_refresh_cookie(response, refresh_token)
-    return TokenOut(access_token=token, user=UserOut.model_validate(user))
+    return TokenOut(user=UserOut.model_validate(user))
 
 
 def _verify_google_id_token_or_401(raw_id_token: str, request: Request) -> dict:
@@ -94,7 +180,7 @@ def _upsert_google_user_from_profile(
     db: Session,
 ) -> User:
     email = str(profile.get("email") or "").lower().strip()
-    if not email:
+    if not email or profile.get("email_verified") is not True:
         log_critical_event(
             domain="auth",
             event="google_profile_missing_email",
@@ -125,6 +211,11 @@ async def request_code(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    enforce_rate_limit(
+        request,
+        otp_request_limiter,
+        detail="Too many verification-code requests. Please try again later.",
+    )
     email = payload.email.strip().lower()
     if "@" not in email:
         raise HTTPException(status_code=400, detail="Please provide a valid email address.")
@@ -231,13 +322,14 @@ async def request_code(
     return {"ok": True}
 
 
-@router.post("/verify-code", response_model=TokenOut)
+@router.post("/verify-code", response_model=TokenOut, response_model_exclude_none=True)
 def verify_code(
     payload: VerifyCodeIn,
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ):
+    _reject_cross_site_cookie_request(request)
     email = payload.email.strip().lower()
     code = payload.code.strip()
 
@@ -290,21 +382,17 @@ def verify_code(
     db.execute(delete(VerificationCode).where(VerificationCode.email == email))
     db.commit()
 
-    token = create_access_token(
-        {"sub": user.id, "email": user.email, "role": user.role.value, "name": user.name or ""}
-    )
-    refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
-    _set_refresh_cookie(response, refresh_token)
-    return TokenOut(access_token=token, user=UserOut.model_validate(user))
+    return _build_auth_response(response, user, db)
 
 
-@router.post("/google", response_model=TokenOut)
+@router.post("/google", response_model=TokenOut, response_model_exclude_none=True)
 def google_sign_in(
     payload: GoogleSignInIn,
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ):
+    _reject_cross_site_cookie_request(request)
     if not settings.google_client_id:
         log_critical_event(
             domain="auth",
@@ -316,16 +404,45 @@ def google_sign_in(
 
     info = _verify_google_id_token_or_401(payload.id_token, request)
     user = _upsert_google_user_from_profile(info, request, db)
-    return _build_auth_response(response, user)
+    return _build_auth_response(response, user, db)
 
 
-@router.post("/google/code", response_model=TokenOut)
+@router.post("/google/state")
+def issue_google_oauth_state(request: Request, response: Response):
+    """Bind an OAuth authorization-code flow to this browser before redirecting."""
+    _reject_cross_site_cookie_request(request)
+    state = create_google_oauth_state_token()
+    _set_google_oauth_state_cookie(response, state)
+    return {"state": state}
+
+
+@router.post("/google/code", response_model=TokenOut, response_model_exclude_none=True)
 def google_sign_in_with_code(
     payload: GoogleCodeSignInIn,
     request: Request,
     response: Response,
+    oauth_state_cookie: str | None = Cookie(
+        default=None, alias=GOOGLE_OAUTH_STATE_COOKIE_NAME
+    ),
     db: Session = Depends(get_db),
 ):
+    _reject_cross_site_cookie_request(request)
+    state_is_valid = validate_google_oauth_state_token(
+        received_state=payload.state,
+        expected_state=oauth_state_cookie,
+    )
+    # Consume the state before exchanging the one-time code. This prevents a
+    # callback URL from being replayed after a successful or failed exchange.
+    _clear_google_oauth_state_cookie(response)
+    if not state_is_valid:
+        log_critical_event(
+            domain="auth",
+            event="google_oauth_state_invalid",
+            message="Google authorization-code flow failed state validation.",
+            request=request,
+            level=logging.WARNING,
+        )
+        return _google_oauth_error_response(400, "Invalid Google sign-in state.")
     if not settings.google_client_id or not settings.google_client_secret:
         log_critical_event(
             domain="auth",
@@ -333,12 +450,27 @@ def google_sign_in_with_code(
             message="Google code sign-in requested but integration is not configured.",
             request=request,
         )
-        raise HTTPException(status_code=400, detail="Google login is not configured.")
+        return _google_oauth_error_response(400, "Google login is not configured.")
 
     code = payload.code.strip()
     if not code:
-        raise HTTPException(status_code=400, detail="Google authorization code is required.")
+        return _google_oauth_error_response(
+            400, "Google authorization code is required."
+        )
     redirect_uri = (payload.redirect_uri or "postmessage").strip() or "postmessage"
+    allowed_redirect_uris = {
+        "postmessage",
+        f"{settings.resolved_site_url()}/auth/google/callback",
+    }
+    if redirect_uri not in allowed_redirect_uris:
+        log_critical_event(
+            domain="auth",
+            event="google_redirect_uri_rejected",
+            message="Google code exchange used an unapproved redirect URI.",
+            request=request,
+            level=logging.WARNING,
+        )
+        return _google_oauth_error_response(400, "Invalid Google redirect URI.")
 
     try:
         exchange_response = httpx.post(
@@ -361,9 +493,9 @@ def google_sign_in_with_code(
             request=request,
             exc=exc,
         )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google sign-in is temporarily unavailable.",
+        return _google_oauth_error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Google sign-in is temporarily unavailable.",
         )
 
     try:
@@ -383,9 +515,9 @@ def google_sign_in_with_code(
             },
             level=logging.WARNING,
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Google authorization code.",
+        return _google_oauth_error_response(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid Google authorization code.",
         )
 
     id_token_value = str(exchange_payload.get("id_token") or "").strip()
@@ -397,23 +529,27 @@ def google_sign_in_with_code(
             request=request,
             level=logging.WARNING,
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Google authorization code.",
+        return _google_oauth_error_response(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid Google authorization code.",
         )
 
-    info = _verify_google_id_token_or_401(id_token_value, request)
-    user = _upsert_google_user_from_profile(info, request, db)
-    return _build_auth_response(response, user)
+    try:
+        info = _verify_google_id_token_or_401(id_token_value, request)
+        user = _upsert_google_user_from_profile(info, request, db)
+    except HTTPException as exc:
+        return _google_oauth_error_response(exc.status_code, str(exc.detail))
+    return _build_auth_response(response, user, db)
 
 
-@router.post("/refresh", response_model=TokenOut)
+@router.post("/refresh", response_model=TokenOut, response_model_exclude_none=True)
 def refresh_access_token(
     request: Request,
     response: Response,
     refresh_cookie: str | None = Cookie(default=None, alias=settings.refresh_token_cookie_name),
     db: Session = Depends(get_db),
 ):
+    _reject_cross_site_cookie_request(request)
     if not refresh_cookie:
         log_critical_event(
             domain="auth",
@@ -464,15 +600,38 @@ def refresh_access_token(
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
-    access_token = create_access_token(
-        {"sub": user.id, "email": user.email, "role": user.role.value, "name": user.name or ""}
-    )
-    new_refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
-    _set_refresh_cookie(response, new_refresh_token)
-    return TokenOut(access_token=access_token, user=UserOut.model_validate(user))
+    if payload.get("ver") != user.auth_version:
+        log_critical_event(
+            domain="auth",
+            event="refresh_token_revoked",
+            message="Refresh token session version is no longer active.",
+            request=request,
+            level=logging.WARNING,
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    return _build_auth_response(response, user, db)
 
 
 @router.post("/logout")
-def logout(response: Response):
+def logout(
+    request: Request,
+    response: Response,
+    refresh_cookie: str | None = Cookie(default=None, alias=settings.refresh_token_cookie_name),
+    db: Session = Depends(get_db),
+):
+    _reject_cross_site_cookie_request(request)
+    if refresh_cookie:
+        try:
+            payload = decode_refresh_token(refresh_cookie)
+            user_id = payload.get("sub")
+            if user_id:
+                user = db.execute(select(User).where(User.id == str(user_id))).scalars().first()
+                if user and payload.get("ver") == user.auth_version:
+                    user.auth_version = int(user.auth_version or 0) + 1
+                    db.commit()
+        except Exception:
+            db.rollback()
+    _clear_access_cookie(response)
     _clear_refresh_cookie(response)
     return {"ok": True}

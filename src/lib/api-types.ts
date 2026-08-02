@@ -5,10 +5,33 @@ import {
 
 export type FlowerType = (typeof FLOWER_TYPES_WITH_MIXED)[number];
 export type BouquetType = (typeof BOUQUET_TYPES)[number];
+export type CatalogType = "FLOWERS" | "BALOONS" | "GIFTS" | "EVENT_SPACE";
 export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "CANCELED";
+
+export type CatalogCategory = {
+  id: string;
+  catalogType: CatalogType;
+  slug: string;
+  name: string;
+  position: number;
+  isActive: boolean;
+};
+
+export type EventTier = {
+  id: string;
+  priceCents: number;
+  description: string;
+};
 
 export type Bouquet = {
   id: string;
+  /**
+   * Optional while older API payloads are still cached. The public catalog
+   * treats an omitted value as FLOWERS for backwards compatibility.
+   */
+  catalogType?: CatalogType;
+  categoryId?: string | null;
+  category?: CatalogCategory | null;
   name: string;
   description: string;
   priceCents: number;
@@ -25,6 +48,10 @@ export type Bouquet = {
   defaultFlowerQuantity: number;
   discountPercent: number;
   discountNote: string | null;
+  videoUrl?: string | null;
+  /** Ordered gallery. Public galleries deliberately expose only its first six images. */
+  galleryImages?: string[];
+  tiers?: EventTier[];
   image: string;
   image2: string | null;
   image3: string | null;
@@ -124,6 +151,8 @@ export type StoreSettings = {
   homeGalleryImage4: string;
   homeGalleryImage5: string;
   homeGalleryImage6: string;
+  /** Ordered gallery stored independently from the legacy six slots. */
+  homeGalleryImages?: string[];
   catalogCategoryImageMono: string;
   catalogCategoryImageMixed: string;
   catalogCategoryImageSeason: string;

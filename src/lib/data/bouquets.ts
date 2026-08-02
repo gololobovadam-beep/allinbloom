@@ -1,4 +1,4 @@
-import type { Bouquet, CatalogResponse } from "@/lib/api-types";
+import type { Bouquet, CatalogResponse, CatalogType } from "@/lib/api-types";
 import {
   CATALOG_SORT_VALUES,
   BOUQUET_TYPE_FILTERS,
@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api-server";
 
 export type CatalogSearchParams = {
   entry?: string;
+  catalogType?: CatalogType | string;
   flower?: string;
   color?: string;
   bouquetType?: string;
@@ -84,6 +85,13 @@ const normalizeSortValue = (value?: string) => {
     : undefined;
 };
 
+const normalizeCatalogType = (value?: CatalogType | string) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  return ["FLOWERS", "BALOONS", "GIFTS", "EVENT_SPACE"].includes(normalized)
+    ? (normalized as CatalogType)
+    : undefined;
+};
+
 export async function getFeaturedBouquets(): Promise<Bouquet[]> {
   const response = await apiFetch("/api/catalog?filter=featured&take=6");
   if (!response.ok) return [];
@@ -91,14 +99,28 @@ export async function getFeaturedBouquets(): Promise<Bouquet[]> {
   return (data.items || []).map((item) => item.bouquet);
 }
 
-export async function getBouquetById(id: string): Promise<Bouquet | null> {
-  const response = await apiFetch(`/api/bouquets/${id}`);
+export async function getBouquetById(
+  id: string,
+  catalogType: CatalogType = "FLOWERS"
+): Promise<Bouquet | null> {
+  const params = new URLSearchParams({ catalogType });
+  const response = await apiFetch(
+    `/api/bouquets/${id}?${params.toString()}`,
+    {},
+    true
+  );
   if (!response.ok) return null;
   return response.json();
 }
 
-export async function getAdminBouquets(): Promise<Bouquet[]> {
-  const response = await apiFetch("/api/bouquets?include_inactive=true", {}, true);
+export async function getAdminBouquets(
+  catalogType: CatalogType = "FLOWERS"
+): Promise<Bouquet[]> {
+  const params = new URLSearchParams({
+    include_inactive: "true",
+    catalogType,
+  });
+  const response = await apiFetch(`/api/bouquets?${params.toString()}`, {}, true);
   if (!response.ok) return [];
   return response.json();
 }
@@ -116,10 +138,12 @@ export async function getBouquets(
   const min = toNumber(filters.min);
   const max = toNumber(filters.max);
   const sort = normalizeSortValue(filters.sort);
+  const catalogType = normalizeCatalogType(filters.catalogType);
   const { cursor, take } = pagination;
 
   const params = new URLSearchParams();
   if (filters.filter) params.set("filter", filters.filter);
+  if (catalogType) params.set("catalogType", catalogType);
   if (flowerTypes) params.set("flower", flowerTypes);
   if (filters.color) params.set("color", filters.color);
   if (bouquetType) params.set("bouquetType", bouquetType);

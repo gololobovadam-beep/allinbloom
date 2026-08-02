@@ -354,10 +354,15 @@ export default async function AdminOrderDetailPage({
         </div>
 
         {hasPaymentDiagnostics ? (
-          <div className="glass rounded-[28px] border border-white/80 p-4 text-sm text-stone-600 sm:p-6">
-              <h2 className="text-lg font-semibold text-stone-900">
-                Payment diagnostics
-              </h2>
+          <details className="glass rounded-[28px] border border-white/80 p-4 text-sm text-stone-600 sm:p-6">
+              <summary className="cursor-pointer list-none text-lg font-semibold text-stone-900 [&::-webkit-details-marker]:hidden">
+                <span className="flex items-center justify-between gap-3">
+                  Technical payment diagnostics
+                  <span className="text-xs font-normal uppercase tracking-[0.2em] text-stone-500">
+                    Show details
+                  </span>
+                </span>
+              </summary>
               <div className="mt-3 space-y-2">
                 {storedFailureMessage ? (
                   <p className="text-stone-800">
@@ -430,7 +435,7 @@ export default async function AdminOrderDetailPage({
                   </div>
                 ) : null}
               </div>
-          </div>
+          </details>
         ) : null}
 
         <div className="glass rounded-[28px] border border-white/80 p-4 text-sm text-stone-600 sm:p-6">
@@ -492,10 +497,15 @@ export default async function AdminOrderDetailPage({
         </div>
 
         {paymentEvents.length ? (
-          <div className="glass rounded-[28px] border border-white/80 p-4 text-sm text-stone-600 sm:p-6">
-            <h2 className="text-lg font-semibold text-stone-900">
-              Payment timeline
-            </h2>
+          <details className="glass rounded-[28px] border border-white/80 p-4 text-sm text-stone-600 sm:p-6">
+            <summary className="cursor-pointer list-none text-lg font-semibold text-stone-900 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center justify-between gap-3">
+                Technical payment timeline
+                <span className="text-xs font-normal uppercase tracking-[0.2em] text-stone-500">
+                  Show details
+                </span>
+              </span>
+            </summary>
             <div className="mt-4 space-y-4">
               {paymentEvents.map((event) => {
                 const contextLines = formatPaymentEventContext(event.context);
@@ -552,7 +562,7 @@ export default async function AdminOrderDetailPage({
                 );
               })}
             </div>
-          </div>
+          </details>
         ) : null}
       </div>
     </div>

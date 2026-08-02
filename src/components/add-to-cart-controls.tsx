@@ -3,6 +3,7 @@
 import { useCart } from "@/lib/cart";
 import { useToast } from "@/components/toast-provider";
 import { clampFlowerQuantity } from "@/lib/flower-quantity";
+import type { CatalogType } from "@/lib/api-types";
 
 type AddToCartControlsProps = {
   item: {
@@ -18,6 +19,7 @@ type AddToCartControlsProps = {
     isMixed?: boolean;
     bouquetType?: string;
     isFlowerQuantityEnabled?: boolean;
+    catalogType?: CatalogType;
   };
   selectedQuantity?: number;
 };
@@ -60,6 +62,7 @@ export default function AddToCartControls({
                 flowerType: item.flowerType,
                 bouquetFlowerTypes: item.flowerTypes,
                 bouquetColors: item.colors,
+                catalogType: item.catalogType || "FLOWERS",
                 isMixed: item.isMixed,
                 bouquetType: item.bouquetType,
                 isFlowerQuantityEnabled: true,
@@ -94,6 +97,7 @@ export default function AddToCartControls({
               flowerType: item.flowerType,
               bouquetFlowerTypes: item.flowerTypes,
               bouquetColors: item.colors,
+              catalogType: item.catalogType || "FLOWERS",
               isMixed: item.isMixed,
               bouquetType: item.bouquetType,
             },

@@ -30,12 +30,19 @@
 ## Auth
 - Email OTP: `POST /api/auth/request-code` -> `POST /api/auth/verify-code`
 - Google sign-in: `POST /api/auth/google`
+- Google sign-in state bootstrap: `POST /api/auth/google/state`
 - Google sign-in fallback (OAuth code exchange): `POST /api/auth/google/code`
 - Refresh token: `httpOnly` cookie (`POST /api/auth/refresh`)
 - Logout: `POST /api/auth/logout`
 
 ## Integration
 Next.js frontend should proxy `/api/*` traffic to this service.
+
+## Production security requirements
+
+- Set `ENVIRONMENT=production` explicitly, use an HTTPS `SITE_URL`, and provide a unique `AUTH_SECRET` of at least 32 characters. The API refuses to start with an omitted environment, placeholder secret, or non-HTTPS production site URL.
+- Keep `CLOUDINARY_UPLOAD_PRESET` server-side; do not expose it as a `NEXT_PUBLIC_*` variable.
+- Configure an ingress/reverse-proxy body limit as a second line of defense. The application limits normal JSON requests and webhooks to 1 MiB and image uploads to approximately 5.125 MiB before multipart parsing.
 
 ## Tests
 Run backend unit tests from the `fastapi` directory:

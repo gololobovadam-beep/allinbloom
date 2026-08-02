@@ -9,7 +9,7 @@ import PromoGallery from "@/components/promo-gallery";
 import { getFeaturedBouquets } from "@/lib/data/bouquets";
 import { getActivePromoSlides } from "@/lib/data/promotions";
 import { getStoreSettings } from "@/lib/data/settings";
-import { getHomeGalleryImages, getHomeHeroImage } from "@/lib/home-images";
+import { getHomeHeroImage, getVisibleHomeGalleryImages } from "@/lib/home-images";
 import { getBouquetPricing } from "@/lib/pricing";
 import {
   SITE_CITY,
@@ -48,7 +48,9 @@ export default async function HomePage() {
   const promoSlides = await getActivePromoSlides();
   const settings = await getStoreSettings();
   const heroImage = getHomeHeroImage(settings);
-  const galleryImages = getHomeGalleryImages(settings);
+  // Administrators can store any number of images; the public home mosaic and
+  // its lightbox intentionally expose only the first six in that order.
+  const galleryImages = getVisibleHomeGalleryImages(settings);
   const [mainGalleryImage, ...compactGalleryImages] = galleryImages;
   const atelierGalleryItems = galleryImages.map((src, idx) => ({
     src,

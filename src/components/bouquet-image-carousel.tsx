@@ -16,7 +16,10 @@ export default function BouquetImageCarousel({
   alt,
 }: BouquetImageCarouselProps) {
   const safeImages = useMemo(
-    () => (images.length ? images : ["/images/mock.webp"]),
+    () => {
+      const visibleImages = images.slice(0, 6);
+      return visibleImages.length ? visibleImages : ["/images/mock.webp"];
+    },
     [images]
   );
 
@@ -133,9 +136,15 @@ export default function BouquetImageCarousel({
 
     emblaApi.on("select", syncCarouselState);
     emblaApi.on("reInit", syncCarouselState);
-    syncCarouselState();
+    // Embla has finished attaching at this point, but let its first layout
+    // settle before reading snaps. Subsequent updates arrive through the
+    // subscribed Embla events below.
+    const initialSyncFrame = window.requestAnimationFrame(() => {
+      syncCarouselState();
+    });
 
     return () => {
+      window.cancelAnimationFrame(initialSyncFrame);
       emblaApi.off("select", syncCarouselState);
       emblaApi.off("reInit", syncCarouselState);
     };

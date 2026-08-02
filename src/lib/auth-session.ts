@@ -1,6 +1,5 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { AUTH_TOKEN_COOKIE } from "@/lib/auth-cookies";
 import { apiFetch } from "@/lib/api-server";
 
 export type AuthUser = {
@@ -20,15 +19,16 @@ const fetchCurrentUser = async () => {
 
 export const getAuthSession = async () => {
   const store = await cookies();
-  const token = store.get(AUTH_TOKEN_COOKIE)?.value || null;
+  const accessCookieName = process.env.ACCESS_TOKEN_COOKIE_NAME || "aib_access";
+  const hasAccessCookie = Boolean(store.get(accessCookieName)?.value);
   const refreshCookieName = process.env.REFRESH_TOKEN_COOKIE_NAME || "aib_refresh";
   const hasRefreshCookie = Boolean(store.get(refreshCookieName)?.value);
-  if (!token && !hasRefreshCookie) {
+  if (!hasAccessCookie && !hasRefreshCookie) {
     return { token: null, user: null };
   }
 
   const user = await fetchCurrentUser();
-  return { token, user };
+  return { token: null, user };
 };
 
 export const requireAuth = async () => {

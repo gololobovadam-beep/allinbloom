@@ -74,7 +74,6 @@ export default function GalleryImageLightbox({
 }: GalleryImageLightboxProps) {
   const [open, setOpen] = useState(false);
   const [telegramViewport, setTelegramViewport] = useState<TelegramViewport | null>(null);
-  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [direction, setDirection] = useState<"next" | "prev" | null>(null);
   const [transitionTick, setTransitionTick] = useState(0);
@@ -83,11 +82,10 @@ export default function GalleryImageLightbox({
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const currentIndexRef = useRef(0);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    setPortalRoot(document.getElementById("lightbox-root") ?? document.body);
-  }, []);
+  const portalRoot =
+    typeof document === "undefined"
+      ? null
+      : document.getElementById("lightbox-root") ?? document.body;
 
   const lightboxItems = useMemo(() => {
     return items.length
@@ -204,9 +202,6 @@ export default function GalleryImageLightbox({
     if (typeof document === "undefined") {
       return;
     }
-    const root = document.getElementById("lightbox-root") ?? document.body;
-    setPortalRoot(root);
-
     const nextIndex = clampIndex(startIndex);
     setDirection(null);
     setTransitionTick((value) => value + 1);

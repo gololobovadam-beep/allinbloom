@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Column, DateTime, Integer, String, func
+from sqlalchemy.orm import relationship
 
 from app.core.database import Base
 
@@ -98,3 +99,39 @@ class StoreSettings(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    home_gallery_image_rows = relationship(
+        "HomeGalleryImage",
+        back_populates="store_settings",
+        cascade="all, delete-orphan",
+        order_by="HomeGalleryImage.position",
+    )
+
+    @property
+    def home_gallery_urls(self) -> list[str]:
+        """Ordered gallery relation with fallback for pre-migration settings."""
+
+        relation_urls = [
+            str(row.url or "").strip()
+            for row in (self.home_gallery_image_rows or [])
+            if str(row.url or "").strip()
+        ]
+        candidates = relation_urls or [
+            str(value or "").strip()
+            for value in (
+                self.home_gallery_image_1,
+                self.home_gallery_image_2,
+                self.home_gallery_image_3,
+                self.home_gallery_image_4,
+                self.home_gallery_image_5,
+                self.home_gallery_image_6,
+            )
+            if str(value or "").strip()
+        ]
+        return list(dict.fromkeys(candidates))
+
+    @property
+    def home_gallery_images(self) -> list[str]:
+        """Schema-facing alias for the normalized homepage gallery."""
+
+        return self.home_gallery_urls

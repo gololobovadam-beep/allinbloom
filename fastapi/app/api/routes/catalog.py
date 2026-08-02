@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_db
 from app.models.bouquet import Bouquet
-from app.models.enums import BouquetType, FlowerType
+# Import relation models so this router can be imported in isolation (for
+# example in focused tests) before SQLAlchemy resolves Bouquet's string-based
+# relationship targets.
+from app.models.bouquet_gallery_image import BouquetGalleryImage  # noqa: F401
+from app.models.catalog_category import CatalogCategory  # noqa: F401
+from app.models.enums import BouquetType, CatalogType, FlowerType
+from app.models.event_tier import EventTier  # noqa: F401
 from app.schemas.catalog import CatalogResponse
 from app.schemas.bouquet import BouquetOut
 from app.services.colors import color_filter_candidates
@@ -66,6 +72,7 @@ def _normalize_sort(value: str | None) -> str:
 
 @router.get("", response_model=CatalogResponse)
 def list_catalog(
+    catalog_type: CatalogType = Query(default=CatalogType.FLOWERS, alias="catalogType"),
     flower: str | None = None,
     color: str | None = None,
     bouquet_type: str | None = Query(default=None, alias="bouquetType"),
@@ -79,11 +86,14 @@ def list_catalog(
     take: int = Query(default=12, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    filters = [Bouquet.is_active.is_(True)]
+    filters = [
+        Bouquet.is_active.is_(True),
+        Bouquet.catalog_type == catalog_type.value,
+    ]
     if filter == "featured":
         filters.append(Bouquet.is_featured.is_(True))
 
-    selected_flowers = _parse_flower_filters(flower)
+    selected_flowers = _parse_flower_filters(flower) if catalog_type == CatalogType.FLOWERS else []
     if selected_flowers:
         flower_filters = []
         for flower_enum in selected_flowers:
@@ -92,7 +102,11 @@ def list_catalog(
             flower_filters.append(func.lower(Bouquet.style).contains(token))
         filters.append(or_(*flower_filters))
 
-    normalized_bouquet_type = _resolve_bouquet_type_filter(bouquet_type, mixed, style)
+    normalized_bouquet_type = (
+        _resolve_bouquet_type_filter(bouquet_type, mixed, style)
+        if catalog_type == CatalogType.FLOWERS
+        else None
+    )
     if normalized_bouquet_type == "mono":
         filters.append(
             or_(
@@ -130,19 +144,36 @@ def list_catalog(
         if max_cents is not None:
             filters.append(Bouquet.price_cents <= max_cents)
 
-    if color:
+    if color and catalog_type == CatalogType.FLOWERS:
         candidates = color_filter_candidates(color)
         if candidates:
             filters.append(
                 or_(*[func.lower(Bouquet.colors).contains(candidate) for candidate in candidates])
             )
 
-    base_query = select(Bouquet).where(and_(*filters))
+    base_query = (
+        select(Bouquet)
+        .options(
+            selectinload(Bouquet.gallery_image_rows),
+            selectinload(Bouquet.event_tiers),
+            selectinload(Bouquet.category),
+        )
+        .where(and_(*filters))
+    )
     normalized_sort = _normalize_sort(sort)
     name_sort_expr = func.lower(func.coalesce(Bouquet.name, ""))
 
     if cursor:
-        cursor_row = db.execute(select(Bouquet).where(Bouquet.id == cursor)).scalars().first()
+        cursor_row = (
+            db.execute(
+                select(Bouquet).where(
+                    Bouquet.id == cursor,
+                    Bouquet.catalog_type == catalog_type.value,
+                )
+            )
+            .scalars()
+            .first()
+        )
         if not cursor_row:
             raise HTTPException(status_code=400, detail="Invalid cursor.")
 

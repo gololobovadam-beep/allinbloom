@@ -27,6 +27,7 @@ from app.services.webhook_events import (
 )
 
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
+MAX_WEBHOOK_BODY_BYTES = 1_000_000
 
 
 def _load_order_for_session(
@@ -128,7 +129,12 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         )
         raise HTTPException(status_code=400, detail="Missing Stripe signature.")
 
+    raw_content_length = request.headers.get("content-length")
+    if raw_content_length and raw_content_length.isdigit() and int(raw_content_length) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook payload is too large.")
     payload = await request.body()
+    if len(payload) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook payload is too large.")
     stripe.api_key = settings.stripe_secret_key
 
     try:
@@ -144,6 +150,20 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             level=logging.WARNING,
         )
         raise HTTPException(status_code=400, detail="Invalid signature.")
+
+    event_livemode = event.get("livemode")
+    if isinstance(event_livemode, bool):
+        expected_livemode = settings.stripe_secret_key.startswith("sk_live_")
+        if event_livemode != expected_livemode:
+            log_critical_event(
+                domain="payment",
+                event="stripe_webhook_livemode_mismatch",
+                message="Stripe webhook mode does not match the configured secret key.",
+                request=request,
+                context={"event_livemode": event_livemode},
+                level=logging.WARNING,
+            )
+            raise HTTPException(status_code=400, detail="Invalid Stripe event.")
 
     event_id = event.get("id")
     if not isinstance(event_id, str) or not event_id.strip():
@@ -177,7 +197,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 request=request,
                 context={"order_id": order_id, "stripe_session_id": session_id},
             )
-        elif order.stripe_session_id and session_id and order.stripe_session_id != session_id:
+        elif not isinstance(session_id, str) or order.stripe_session_id != session_id:
             log_critical_event(
                 domain="payment",
                 event="stripe_session_id_mismatch",
@@ -373,6 +393,21 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         session_id = session.get("id")
         payment_intent_id = _provider_id(session.get("payment_intent"))
         order = _load_order_for_session(db, order_id=order_id, session_id=session_id)
+        if order and (
+            not isinstance(session_id, str) or order.stripe_session_id != session_id
+        ):
+            log_critical_event(
+                domain="payment",
+                event="stripe_session_id_mismatch",
+                message="Stripe failure webhook session id does not match stored order session id.",
+                request=request,
+                context={
+                    "order_id": order.id,
+                    "stripe_session_id": session_id,
+                    "expected_stripe_session_id": order.stripe_session_id,
+                },
+            )
+            order = None
         if order:
             record_payment_event_best_effort(
                 db,

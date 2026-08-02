@@ -10,9 +10,10 @@ import {
   FLOWER_QUANTITY_MIN,
 } from "@/lib/flower-quantity";
 import { formatLabel } from "@/lib/format";
-import AdminImageUpload from "@/components/admin-image-upload";
+import AdminImageList from "@/components/admin-image-list";
 import MultiCheckboxDropdown from "@/components/multi-checkbox-dropdown";
 import SingleSelectDropdown from "@/components/single-select-dropdown";
+import { getBouquetGalleryImages } from "@/lib/bouquet-images";
 
 type AdminBouquetFormProps = {
   bouquet?: Bouquet;
@@ -85,43 +86,6 @@ const resolveDefaultBouquetType = (bouquet?: Bouquet) => {
   return bouquet?.isMixed ? "MIXED" : "MONO";
 };
 
-const ADDITIONAL_IMAGE_FIELDS = [
-  {
-    key: "image2",
-    urlLabel: "Image URL",
-    previewAlt: "Bouquet additional image preview",
-  },
-  {
-    key: "image3",
-    urlLabel: "Image URL",
-    previewAlt: "Bouquet additional image preview",
-  },
-  {
-    key: "image4",
-    urlLabel: "Image URL",
-    previewAlt: "Bouquet additional image preview",
-  },
-  {
-    key: "image5",
-    urlLabel: "Image URL",
-    previewAlt: "Bouquet additional image preview",
-  },
-  {
-    key: "image6",
-    urlLabel: "Image URL",
-    previewAlt: "Bouquet additional image preview",
-  },
-] as const;
-
-type AdditionalImageKey = (typeof ADDITIONAL_IMAGE_FIELDS)[number]["key"];
-
-const ADDITIONAL_IMAGE_KEYS = ADDITIONAL_IMAGE_FIELDS.map((field) => field.key);
-
-const getDefaultAdditionalImageKeys = (bouquet?: Bouquet): AdditionalImageKey[] =>
-  ADDITIONAL_IMAGE_FIELDS.filter(({ key }) =>
-    Boolean(String(bouquet?.[key] || "").trim())
-  ).map(({ key }) => key);
-
 function SubmitButton() {
   const { pending } = useFormStatus();
 
@@ -136,14 +100,22 @@ function SubmitButton() {
   );
 }
 
-export default function AdminBouquetForm({
+export default function AdminBouquetForm(props: AdminBouquetFormProps) {
+  // Editing a different bouquet should start with that bouquet's defaults.
+  // A keyed editor resets local form state before paint instead of issuing a
+  // second render from an effect after the product has changed.
+  return (
+    <AdminBouquetFormEditor
+      key={props.bouquet?.id ?? "new-bouquet"}
+      {...props}
+    />
+  );
+}
+
+function AdminBouquetFormEditor({
   bouquet,
   action,
 }: AdminBouquetFormProps) {
-  const defaultBouquetType = useMemo(
-    () => resolveDefaultBouquetType(bouquet),
-    [bouquet]
-  );
   const [errors, setErrors] = useState<string[]>([]);
   const [invalidFields, setInvalidFields] = useState<string[]>([]);
   const [selectedColors, setSelectedColors] = useState<string[]>(() =>
@@ -156,26 +128,12 @@ export default function AdminBouquetForm({
   const [bouquetTypeWarning, setBouquetTypeWarning] = useState("");
   const [selectedBouquetType, setSelectedBouquetType] = useState<
     (typeof BOUQUET_TYPES)[number]
-  >(() => defaultBouquetType);
+  >(() => resolveDefaultBouquetType(bouquet));
   const [isFlowerQuantityEnabled, setIsFlowerQuantityEnabled] = useState(
     bouquet ? bouquet.allowFlowerQuantity : true
   );
-  const [activeAdditionalImageKeys, setActiveAdditionalImageKeys] = useState<
-    AdditionalImageKey[]
-  >(() => getDefaultAdditionalImageKeys(bouquet));
-  const [photoLimitWarning, setPhotoLimitWarning] = useState("");
   const [isColorMenuOpen, setIsColorMenuOpen] = useState(false);
   const colorMenuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    setActiveAdditionalImageKeys(getDefaultAdditionalImageKeys(bouquet));
-    setPhotoLimitWarning("");
-    setSelectedFlowerTypes(parseSelectedFlowerTypes(bouquet));
-    setFlowerTypeLimitWarning("");
-    setBouquetTypeWarning("");
-    setSelectedBouquetType(resolveDefaultBouquetType(bouquet));
-    setIsFlowerQuantityEnabled(bouquet ? bouquet.allowFlowerQuantity : true);
-  }, [bouquet?.id]);
 
   useEffect(() => {
     if (!isColorMenuOpen) return;
@@ -213,15 +171,6 @@ export default function AdminBouquetForm({
     () => selectedFlowerTypes.join(", "),
     [selectedFlowerTypes]
   );
-  const visibleAdditionalImageFields = useMemo(
-    () =>
-      ADDITIONAL_IMAGE_FIELDS.filter((field) =>
-        activeAdditionalImageKeys.includes(field.key)
-      ),
-    [activeAdditionalImageKeys]
-  );
-  const canAddAdditionalPhoto =
-    activeAdditionalImageKeys.length < ADDITIONAL_IMAGE_FIELDS.length;
   const selectedColorsLabel = useMemo(() => {
     if (!selectedColors.length) return "Select colors";
     const preview = selectedColors.slice(0, 3).map(formatPaletteLabel).join(", ");
@@ -286,32 +235,6 @@ export default function AdminBouquetForm({
     setSelectedBouquetType(nextType);
   };
 
-  const handleAddPhoto = () => {
-    const nextField = ADDITIONAL_IMAGE_FIELDS.find(
-      ({ key }) => !activeAdditionalImageKeys.includes(key)
-    );
-
-    if (!nextField) {
-      setPhotoLimitWarning("Maximum 6 photos per bouquet.");
-      return;
-    }
-
-    const nextSet = new Set<AdditionalImageKey>([
-      ...activeAdditionalImageKeys,
-      nextField.key,
-    ]);
-    const orderedKeys = ADDITIONAL_IMAGE_KEYS.filter((key) => nextSet.has(key));
-    setActiveAdditionalImageKeys(orderedKeys);
-    setPhotoLimitWarning("");
-  };
-
-  const handleRemovePhoto = (key: AdditionalImageKey) => {
-    setActiveAdditionalImageKeys((current) =>
-      current.filter((entry) => entry !== key)
-    );
-    setPhotoLimitWarning("");
-  };
-
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     const formData = new FormData(event.currentTarget);
     const nextErrors: string[] = [];
@@ -319,7 +242,10 @@ export default function AdminBouquetForm({
 
     const name = String(formData.get("name") || "").trim();
     const description = String(formData.get("description") || "").trim();
-    const image = String(formData.get("image") || "").trim();
+    const galleryImages = formData
+      .getAll("galleryImages")
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
     const price = parseNumber(formData.get("price"));
     const discountPercent = Math.max(
       0,
@@ -346,9 +272,9 @@ export default function AdminBouquetForm({
       nextInvalid.add("price");
     }
 
-    if (!image) {
+    if (!galleryImages.length) {
       nextErrors.push("Image URL is required.");
-      nextInvalid.add("image");
+      nextInvalid.add("galleryImages");
     }
 
     if (discountPercent > 0 && !discountNote) {
@@ -546,58 +472,14 @@ export default function AdminBouquetForm({
           </div>
         </div>
         <div className="min-w-0 grid auto-rows-max gap-4">
-          <AdminImageUpload
-            defaultValue={bouquet?.image || "/images/mock.webp"}
+          <AdminImageList
+            name="galleryImages"
+            initialImages={bouquet ? getBouquetGalleryImages(bouquet) : []}
+            title="Bouquet gallery images"
+            description="Add as many photos as needed. Their order is kept, and the first six are used in the public gallery."
+            previewAlt="Bouquet gallery image"
             recommendedSize="1000x1000"
-            isInvalid={invalidSet.has("image")}
           />
-          <div className="space-y-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-stone-500">
-              Additional bouquet photos (optional)
-            </p>
-            <div className="grid min-w-0 gap-4">
-              {visibleAdditionalImageFields.map((field) => (
-                <div
-                  key={field.key}
-                  className="relative min-w-0 rounded-[24px] border border-stone-200/70 bg-white/45 p-3"
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleRemovePhoto(field.key)}
-                    className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border border-stone-200 bg-white/90 text-sm text-stone-600 transition hover:border-stone-300 hover:text-stone-800"
-                    aria-label="Remove photo"
-                  >
-                    x
-                  </button>
-                  <AdminImageUpload
-                    name={field.key}
-                    defaultValue={bouquet?.[field.key] || ""}
-                    urlLabel={field.urlLabel}
-                    previewAlt={field.previewAlt}
-                    recommendedSize="1000x1000"
-                    previewClassName="h-24 w-24"
-                    required={false}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleAddPhoto}
-            className={`inline-flex h-10 w-full items-center justify-center rounded-full px-4 text-[11px] uppercase tracking-[0.22em] transition ${
-              canAddAdditionalPhoto
-                ? "border border-stone-300 bg-white/85 text-stone-700 hover:border-stone-400"
-                : "cursor-not-allowed border border-stone-200 bg-stone-100 text-stone-400"
-            }`}
-          >
-            Add photo
-          </button>
-          {photoLimitWarning ? (
-            <p className="text-[11px] uppercase tracking-[0.18em] text-rose-500">
-              {photoLimitWarning}
-            </p>
-          ) : null}
           <div className={invalidSet.has("flowerTypes") ? "rounded-2xl border border-rose-300 p-2" : ""}>
             <input type="hidden" name="style" value={selectedFlowerTypesValue} />
             <input

@@ -24,14 +24,25 @@ const coerceImageUrl = (value: string | null | undefined, fallback: string) => {
 export const getHomeHeroImage = (settings: StoreSettings) =>
   coerceImageUrl(settings.homeHeroImage, DEFAULT_HOME_HERO_IMAGE);
 
-export const getHomeGalleryImages = (settings: StoreSettings) => [
-  coerceImageUrl(settings.homeGalleryImage1, DEFAULT_HOME_GALLERY_IMAGES[0]),
-  coerceImageUrl(settings.homeGalleryImage2, DEFAULT_HOME_GALLERY_IMAGES[1]),
-  coerceImageUrl(settings.homeGalleryImage3, DEFAULT_HOME_GALLERY_IMAGES[2]),
-  coerceImageUrl(settings.homeGalleryImage4, DEFAULT_HOME_GALLERY_IMAGES[3]),
-  coerceImageUrl(settings.homeGalleryImage5, DEFAULT_HOME_GALLERY_IMAGES[4]),
-  coerceImageUrl(settings.homeGalleryImage6, DEFAULT_HOME_GALLERY_IMAGES[5]),
-];
+export const getHomeGalleryImages = (settings: StoreSettings) => {
+  const relationImages = (settings.homeGalleryImages || [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index);
+  if (relationImages.length) return relationImages;
+
+  return [
+    coerceImageUrl(settings.homeGalleryImage1, DEFAULT_HOME_GALLERY_IMAGES[0]),
+    coerceImageUrl(settings.homeGalleryImage2, DEFAULT_HOME_GALLERY_IMAGES[1]),
+    coerceImageUrl(settings.homeGalleryImage3, DEFAULT_HOME_GALLERY_IMAGES[2]),
+    coerceImageUrl(settings.homeGalleryImage4, DEFAULT_HOME_GALLERY_IMAGES[3]),
+    coerceImageUrl(settings.homeGalleryImage5, DEFAULT_HOME_GALLERY_IMAGES[4]),
+    coerceImageUrl(settings.homeGalleryImage6, DEFAULT_HOME_GALLERY_IMAGES[5]),
+  ];
+};
+
+export const getVisibleHomeGalleryImages = (settings: StoreSettings) =>
+  getHomeGalleryImages(settings).slice(0, 6);
 
 export const getCatalogCategoryImages = (settings: StoreSettings) => ({
   mono: coerceImageUrl(

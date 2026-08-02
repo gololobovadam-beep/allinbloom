@@ -13,14 +13,17 @@ export default function GoogleAuthCallback() {
   const [exchangeFailed, setExchangeFailed] = useState(false);
   const queryError = searchParams.get("error");
   const code = searchParams.get("code");
+  const state = searchParams.get("state");
   const immediateFailureMessage = queryError
     ? "Google sign-in was canceled."
     : code
-    ? null
+    ? state
+      ? null
+      : "Google sign-in state is missing."
     : "Google sign-in code is missing.";
 
   useEffect(() => {
-    if (!code || immediateFailureMessage) {
+    if (!code || !state || immediateFailureMessage) {
       return;
     }
 
@@ -30,7 +33,7 @@ export default function GoogleAuthCallback() {
       const response = await clientFetch("/api/auth/google/code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, redirectUri }),
+        body: JSON.stringify({ code, redirectUri, state }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -40,16 +43,15 @@ export default function GoogleAuthCallback() {
         return;
       }
 
-      const token = payload?.accessToken || payload?.access_token;
       const user = payload?.user;
-      if (!token || !user) {
+      if (!user) {
         if (canceled) return;
         setExchangeFailed(true);
         setStatus("Unable to sign in with Google.");
         return;
       }
 
-      setAuthSession(token, user);
+      setAuthSession(user);
       window.location.replace("/");
     };
 
@@ -57,7 +59,7 @@ export default function GoogleAuthCallback() {
     return () => {
       canceled = true;
     };
-  }, [code, immediateFailureMessage]);
+  }, [code, immediateFailureMessage, state]);
 
   const failed = Boolean(immediateFailureMessage) || exchangeFailed;
   const displayStatus = immediateFailureMessage || status;

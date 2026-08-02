@@ -8,6 +8,7 @@ import {
   getCatalogCategoryImages,
   getHomeGalleryImages,
   getHomeHeroImage,
+  getVisibleHomeGalleryImages,
 } from "@/lib/home-images";
 
 const baseSettings: StoreSettings = {
@@ -81,5 +82,16 @@ describe("home image fallback helpers", () => {
       season: "/images/custom-season.webp",
       all: "/images/custom-all.webp",
     });
+  });
+
+  it("keeps arbitrary admin gallery images but exposes only the first six publicly", () => {
+    const homeGalleryImages = Array.from(
+      { length: 8 },
+      (_, index) => `/images/gallery-${index + 1}.webp`
+    );
+    const settings = makeSettings({ homeGalleryImages });
+
+    expect(getHomeGalleryImages(settings)).toEqual(homeGalleryImages);
+    expect(getVisibleHomeGalleryImages(settings)).toEqual(homeGalleryImages.slice(0, 6));
   });
 });
