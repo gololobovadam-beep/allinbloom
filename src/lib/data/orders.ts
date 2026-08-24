@@ -57,6 +57,9 @@ export async function cancelCheckoutOrder(
   const normalizedOrderId = orderId?.trim() || "";
   const normalizedPaypalOrderId = paypalOrderId?.trim() || "";
   if (!normalizedOrderId && !normalizedPaypalOrderId) return null;
+  const checkoutCookieName = /^[A-Za-z0-9_-]{1,128}$/.test(normalizedOrderId)
+    ? `aib_checkout_${normalizedOrderId}`
+    : undefined;
   const response = await apiFetch(
     "/api/checkout/cancel",
     {
@@ -67,7 +70,8 @@ export async function cancelCheckoutOrder(
         paypalOrderId: normalizedPaypalOrderId || undefined,
       }),
     },
-    false
+    false,
+    checkoutCookieName ? [checkoutCookieName] : undefined
   );
   if (!response.ok) return null;
   const data = (await response.json().catch(() => ({}))) as { status?: string };

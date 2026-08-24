@@ -62,19 +62,36 @@ def upgrade():
         """
     )
 
-    op.alter_column(
-        "Bouquet",
-        "bouquetType",
-        existing_type=sa.String(),
-        nullable=False,
-        server_default=sa.text("'MONO'"),
-    )
-    op.alter_column(
-        "Bouquet",
-        "style",
-        existing_type=sa.String(),
-        nullable=False,
-    )
+    # SQLite has no ``ALTER COLUMN``.  Recreate the table through Alembic's
+    # batch helper so a clean SQLite test/local database can follow the same
+    # migration chain as PostgreSQL.
+    if dialect == "sqlite":
+        with op.batch_alter_table("Bouquet", recreate="always") as batch_op:
+            batch_op.alter_column(
+                "bouquetType",
+                existing_type=sa.String(),
+                nullable=False,
+                server_default=sa.text("'MONO'"),
+            )
+            batch_op.alter_column(
+                "style",
+                existing_type=sa.String(),
+                nullable=False,
+            )
+    else:
+        op.alter_column(
+            "Bouquet",
+            "bouquetType",
+            existing_type=sa.String(),
+            nullable=False,
+            server_default=sa.text("'MONO'"),
+        )
+        op.alter_column(
+            "Bouquet",
+            "style",
+            existing_type=sa.String(),
+            nullable=False,
+        )
 
 
 def downgrade():
@@ -118,4 +135,8 @@ def downgrade():
             """
         )
 
-    op.drop_column("Bouquet", "bouquetType")
+    if dialect == "sqlite":
+        with op.batch_alter_table("Bouquet", recreate="always") as batch_op:
+            batch_op.drop_column("bouquetType")
+    else:
+        op.drop_column("Bouquet", "bouquetType")

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBouquetForm } from "@/lib/bouquet-form";
+import { parseBouquetForm, parseCatalogProductForm } from "@/lib/bouquet-form";
 import { BOUQUET_TYPES, FLOWER_TYPES } from "@/lib/constants";
 
 const makeFormData = (entries: Record<string, string | string[]>) => {
@@ -175,5 +175,31 @@ describe("parseBouquetForm", () => {
     expect(payload.galleryImages).toHaveLength(7);
     expect(payload.image).toBe("/images/1.webp");
     expect(payload.image6).toBe("/images/6.webp");
+  });
+});
+
+describe("parseCatalogProductForm", () => {
+  it("creates a valid gift payload for the FastAPI catalog endpoint", () => {
+    const payload = parseCatalogProductForm(
+      makeFormData({
+        catalogType: "GIFTS",
+        name: "Gift box",
+        description: "A thoughtful gift",
+        price: "95",
+        galleryImages: "/images/gift-box.webp",
+        isActive: "on",
+      })
+    );
+
+    expect(payload).toMatchObject({
+      catalogType: "GIFTS",
+      name: "Gift box",
+      priceCents: 9500,
+      image: "/images/gift-box.webp",
+      galleryImages: ["/images/gift-box.webp"],
+      isActive: true,
+      allowFlowerQuantity: false,
+      tiers: [],
+    });
   });
 });

@@ -85,6 +85,30 @@ def payment_failure_values(
     return values
 
 
+def payment_attempt_failure_values(
+    diagnostics: PaymentFailureDiagnostics,
+    **extra_values: Any,
+) -> dict[str, Any]:
+    """Persist the latest diagnostic without closing a retryable checkout."""
+    values = {
+        "payment_failure_stage": _clean_text(
+            diagnostics.stage, max_length=_STAGE_MAX_LENGTH
+        ),
+        "payment_failure_code": _clean_text(
+            diagnostics.code, max_length=_CODE_MAX_LENGTH
+        ),
+        "payment_failure_message": _clean_text(
+            diagnostics.message, max_length=_MESSAGE_MAX_LENGTH
+        ),
+        "payment_failure_details": _clean_text(
+            diagnostics.details, max_length=_DETAILS_MAX_LENGTH
+        ),
+        "payment_failed_at": datetime.now(timezone.utc),
+    }
+    values.update(extra_values)
+    return values
+
+
 def payment_success_values(**extra_values: Any) -> dict[str, Any]:
     values = {
         "status": OrderStatus.PAID,

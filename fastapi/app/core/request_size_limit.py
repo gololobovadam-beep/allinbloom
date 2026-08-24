@@ -20,7 +20,9 @@ WEBHOOK_BODY_LIMIT_BYTES = 1_000_000
 UPLOAD_BODY_LIMIT_BYTES = 5 * 1024 * 1024 + 128 * 1024
 
 _WEBHOOK_PATHS = {"/api/stripe/webhook", "/api/paypal/webhook"}
-_UPLOAD_PATHS = {"/api/upload", "/api/upload/review"}
+# Public review uploads are intentionally not exposed.  Images can only be
+# uploaded through the authenticated staff endpoint.
+_UPLOAD_PATHS = {"/api/upload"}
 
 Scope = dict[str, Any]
 Message = dict[str, Any]

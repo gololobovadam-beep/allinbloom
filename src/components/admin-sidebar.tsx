@@ -4,7 +4,7 @@ import AdminReviewsBadge from "@/components/admin-reviews-badge";
 
 export default function AdminSidebar() {
   return (
-    <aside className="glass h-fit w-full rounded-[28px] border border-white/80 p-5 sm:p-6 lg:max-w-[260px]">
+    <aside className="glass h-fit w-full rounded-[28px] border border-white/80 p-5 sm:p-6 lg:self-start lg:max-w-[260px]">
       <div className="space-y-1">
         <p className="text-xs uppercase tracking-[0.32em] text-stone-500">
           All in Bloom
@@ -67,12 +67,6 @@ export default function AdminSidebar() {
           className="flex h-11 items-center rounded-2xl border border-transparent bg-white/70 px-3 transition hover:border-stone-200"
         >
           Homepage images
-        </Link>
-        <Link
-          href="/catalog"
-          className="flex h-11 items-center rounded-2xl border border-transparent bg-white/70 px-3 transition hover:border-stone-200"
-        >
-          View storefront
         </Link>
       </nav>
     </aside>

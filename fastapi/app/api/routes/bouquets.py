@@ -230,8 +230,8 @@ def create_bouquet(
         _prepare_flower_data(data)
     else:
         apply_non_flower_defaults(data)
-        # Event Space is never purchasable: its only prices are configured
-        # tiers, so retain a neutral legacy price for the shared product table.
+        # Event Space is never purchasable, so retain a neutral legacy price
+        # for the shared product table whether or not it has optional tiers.
         data["price_cents"] = (
             0
             if catalog_type == CatalogType.EVENT_SPACE

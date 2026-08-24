@@ -16,7 +16,7 @@ class RequestBodyLimitMiddlewareTests(unittest.TestCase):
     def test_sensitive_paths_use_expected_limits(self):
         self.assertEqual(get_request_body_limit("/api/stripe/webhook"), WEBHOOK_BODY_LIMIT_BYTES)
         self.assertEqual(get_request_body_limit("/api/paypal/webhook"), WEBHOOK_BODY_LIMIT_BYTES)
-        self.assertEqual(get_request_body_limit("/api/upload/review"), UPLOAD_BODY_LIMIT_BYTES)
+        self.assertEqual(get_request_body_limit("/api/upload/review"), DEFAULT_BODY_LIMIT_BYTES)
         self.assertEqual(get_request_body_limit("/api/reviews"), DEFAULT_BODY_LIMIT_BYTES)
 
     def test_chunked_body_is_rejected_before_application_buffers_it(self):

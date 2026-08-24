@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, datetime, timezone
+from hashlib import sha256
 import json
 import logging
+import re
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 import stripe
 from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, joinedload
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import _reject_cross_site_cookie_request, get_db, get_optional_user
 from app.core.config import settings
@@ -46,20 +50,23 @@ from app.services.orders import (
     expire_pending_orders,
     resolve_order_status_from_paypal_order,
     resolve_order_status_from_session,
-    sync_order_with_paypal,
-    sync_order_with_stripe,
+    sync_order_with_paypal_payload,
+    sync_order_with_stripe_payload,
 )
 from app.services.payment_diagnostics import (
-    build_exception_failure_diagnostics,
     build_paypal_failure_diagnostics,
     build_stripe_session_failure_diagnostics,
     payment_failure_values,
-    payment_success_values,
 )
 from app.services.payment_events import record_payment_event_best_effort
+from app.services.payment_notifications import (
+    dispatch_pending_order_notifications,
+    mark_order_paid,
+)
 from app.services.paypal import (
     PayPalApiError,
     paypal_create_order,
+    paypal_capture_order,
     paypal_get_order,
     paypal_is_configured,
     paypal_void_order,
@@ -78,6 +85,8 @@ FLORIST_CHOICE_IMAGE = "/images/florist-choice.webp"
 FLORIST_CHOICE_ID_PREFIX = "florist-choice-"
 DELIVERY_TIME_WINDOWS = {"8:30 AM - 12 PM", "12 PM - 4 PM", "4 PM - 8 PM"}
 checkout_limiter = SlidingWindowRateLimiter(limit=10, window_seconds=15 * 60)
+_IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
+_SUPPORTED_CURRENCY = "USD"
 
 
 def _is_flower_quantity_enabled_for_bouquet(bouquet: Bouquet) -> bool:
@@ -85,19 +94,6 @@ def _is_flower_quantity_enabled_for_bouquet(bouquet: Bouquet) -> bool:
     if bouquet_type not in {BouquetType.MONO.value, BouquetType.SEASON.value}:
         return False
     return bool(getattr(bouquet, "allow_flower_quantity", False))
-
-
-def _set_order_status_safely(db: Session, order: Order, status: OrderStatus) -> None:
-    try:
-        if status == OrderStatus.PAID:
-            values = payment_success_values()
-        else:
-            values = {"status": status}
-        for key, value in values.items():
-            setattr(order, key, value)
-        db.commit()
-    except Exception:
-        db.rollback()
 
 
 def _set_order_failed_safely(
@@ -147,6 +143,15 @@ def _payment_provider_for_order(order: Order, raw_provider: str | None = None) -
     return "checkout"
 
 
+def _provider_id(value: object) -> str | None:
+    if not value:
+        return None
+    if isinstance(value, str):
+        return value
+    identifier = getattr(value, "id", None)
+    return str(identifier) if identifier else None
+
+
 CLIENT_CHECKOUT_EVENTS = {
     "browser_redirect_started",
     "browser_success_returned",
@@ -154,23 +159,106 @@ CLIENT_CHECKOUT_EVENTS = {
     "browser_status_check_started",
 }
 
+# Browser telemetry is persisted with the payment timeline.  Do not accept an
+# arbitrary context object here: a compromised client, browser extension, or
+# future UI change must not accidentally send cardholder or delivery data to
+# application logs.
+CLIENT_CHECKOUT_EVENT_CONTEXT_FIELDS = {
+    "browser_redirect_started": {"target"},
+    "browser_success_returned": {"hasPaypalToken"},
+    "browser_cancel_returned": set(),
+    "browser_status_check_started": set(),
+}
+
 
 def _clean_text(value: str | None) -> str:
     return (value or "").strip()
 
 
-def _safe_checkout_event_context(context: dict | None) -> dict[str, str | int | float | bool]:
-    """Keep browser telemetry bounded and free from nested sensitive blobs."""
-    safe: dict[str, str | int | float | bool] = {}
+def _checkout_attempt_fingerprint(
+    payload: CheckoutRequest, *, user_id: str | None, payment_method: str
+) -> str:
+    """Bind a client retry key to one exact, authenticated checkout request."""
+    request_data = payload.model_dump(mode="json", exclude_none=True)
+    request_data.pop("idempotency_key", None)
+    request_data["payment_method"] = payment_method
+    request_data["user_id"] = user_id or "guest"
+    serialized = json.dumps(request_data, sort_keys=True, separators=(",", ":"))
+    return sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _checkout_idempotency_key(payload: CheckoutRequest, request: Request) -> str:
+    body_key = _clean_text(payload.idempotency_key)
+    header_key = _clean_text(request.headers.get("idempotency-key"))
+    if body_key and header_key and body_key != header_key:
+        raise HTTPException(status_code=400, detail="Conflicting idempotency keys.")
+    key = body_key or header_key
+    if not _IDEMPOTENCY_KEY_PATTERN.fullmatch(key):
+        raise HTTPException(status_code=400, detail="A valid idempotency key is required.")
+    return key
+
+
+def _load_checkout_attempt(db: Session, key: str) -> Order | None:
+    return (
+        db.execute(
+            select(Order)
+            .where(Order.checkout_idempotency_key == key)
+            .options(joinedload(Order.items))
+        )
+        .unique()
+        .scalars()
+        .first()
+    )
+
+
+def _existing_checkout_response(
+    order: Order,
+    *,
+    response: Response,
+    fingerprint: str,
+    payment_method: str,
+) -> CheckoutResponse | None:
+    if (
+        order.checkout_request_fingerprint != fingerprint
+        or order.payment_provider != payment_method
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This idempotency key belongs to a different checkout request.",
+        )
+    if order.status != OrderStatus.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail="This checkout attempt is already closed. Start a new checkout.",
+        )
+    if not order.checkout_redirect_url:
+        return None
+    _set_checkout_access_cookie(response, order.id)
+    return CheckoutResponse(
+        url=order.checkout_redirect_url,
+        order_id=order.id,
+        provider=payment_method,
+    )
+
+
+def _safe_checkout_event_context(
+    event_name: str,
+    context: dict | None,
+) -> dict[str, str | bool]:
+    """Keep browser telemetry to an explicit, non-sensitive allowlist."""
+    safe: dict[str, str | bool] = {}
+    allowed_fields = CLIENT_CHECKOUT_EVENT_CONTEXT_FIELDS.get(event_name, set())
     for raw_key, raw_value in (context or {}).items():
         key = str(raw_key).strip()
-        if not key or len(key) > 64:
+        if key not in allowed_fields:
             continue
-        if isinstance(raw_value, str):
-            safe[key] = raw_value.strip()[:256]
-        elif isinstance(raw_value, bool):
-            safe[key] = raw_value
-        elif isinstance(raw_value, (int, float)):
+        if key == "target" and isinstance(raw_value, str):
+            # Currently the only client-side redirect target.  Keeping the
+            # value enumerated avoids logging arbitrary URLs or identifiers.
+            target = raw_value.strip()
+            if target == "provider_redirect":
+                safe[key] = target
+        elif key == "hasPaypalToken" and isinstance(raw_value, bool):
             safe[key] = raw_value
     return safe
 
@@ -377,6 +465,23 @@ async def start_checkout(
                 context={"user_id": user_id},
             )
             raise HTTPException(status_code=400, detail="PayPal is not configured.")
+
+    idempotency_key = _checkout_idempotency_key(payload, request)
+    request_fingerprint = _checkout_attempt_fingerprint(
+        payload,
+        user_id=user_id,
+        payment_method=payment_method,
+    )
+    existing_attempt = _load_checkout_attempt(db, idempotency_key)
+    if existing_attempt:
+        existing_response = _existing_checkout_response(
+            existing_attempt,
+            response=response,
+            fingerprint=request_fingerprint,
+            payment_method=payment_method,
+        )
+        if existing_response:
+            return existing_response
 
     items = payload.items
     raw_address = _clean_text(payload.address)
@@ -628,6 +733,16 @@ async def start_checkout(
                 level=logging.WARNING,
             )
             raise HTTPException(status_code=400, detail="Some items are unavailable.")
+        bouquet_currency = (getattr(bouquet, "currency", _SUPPORTED_CURRENCY) or "").upper()
+        if bouquet_currency != _SUPPORTED_CURRENCY:
+            log_critical_event(
+                domain="payment",
+                event="checkout_unsupported_currency",
+                message="A catalog item uses a currency unsupported by the payment flow.",
+                request=request,
+                context={"user_id": user_id, "item_id": item.id, "currency": bouquet_currency},
+            )
+            raise HTTPException(status_code=400, detail="Some items are unavailable.")
         catalog_type = getattr(bouquet, "catalog_type", CatalogType.FLOWERS)
         if catalog_type == CatalogType.EVENT_SPACE or str(catalog_type).upper() == "EVENT_SPACE":
             log_critical_event(
@@ -720,7 +835,17 @@ async def start_checkout(
             select(Order.id)
             .where(
                 Order.email == checkout_email,
-                Order.status.in_([OrderStatus.PENDING, OrderStatus.PAID]),
+                Order.status.in_(
+                    [
+                        OrderStatus.PENDING,
+                        OrderStatus.PAID,
+                        OrderStatus.PARTIALLY_REFUNDED,
+                        OrderStatus.REFUNDED,
+                        OrderStatus.DISPUTED,
+                        OrderStatus.CHARGEBACK,
+                        OrderStatus.REVERSED,
+                    ]
+                ),
             )
             .limit(1)
         )
@@ -799,28 +924,53 @@ async def start_checkout(
             country=country,
         )
 
-    order = Order(
-        email=checkout_email,
-        phone=normalized_phone or None,
-        total_cents=computed_total,
-        items=order_items,
-        delivery_address=delivery_address or None,
-        delivery_address_line1=address_line1 or None,
-        delivery_address_line2=address_line2 or None,
-        delivery_city=city or None,
-        delivery_state=state or None,
-        delivery_postal_code=postal_code or None,
-        delivery_country=country or None,
-        delivery_floor=floor or None,
-        delivery_date_time=delivery_date_time or None,
-        order_comment=order_comment or None,
-        delivery_miles=f"{delivery.miles:.1f}" if delivery.miles is not None else None,
-        delivery_fee_cents=delivery.fee_cents,
-        first_order_discount_percent=first_order_discount_percent,
-    )
-    db.add(order)
-    db.commit()
-    db.refresh(order)
+    is_new_attempt = existing_attempt is None
+    if existing_attempt:
+        order = existing_attempt
+    else:
+        order = Order(
+            email=checkout_email,
+            phone=normalized_phone or None,
+            total_cents=computed_total,
+            currency=_SUPPORTED_CURRENCY,
+            items=order_items,
+            payment_provider=payment_method,
+            checkout_idempotency_key=idempotency_key,
+            checkout_request_fingerprint=request_fingerprint,
+            delivery_address=delivery_address or None,
+            delivery_address_line1=address_line1 or None,
+            delivery_address_line2=address_line2 or None,
+            delivery_city=city or None,
+            delivery_state=state or None,
+            delivery_postal_code=postal_code or None,
+            delivery_country=country or None,
+            delivery_floor=floor or None,
+            delivery_date_time=delivery_date_time or None,
+            order_comment=order_comment or None,
+            delivery_miles=f"{delivery.miles:.1f}" if delivery.miles is not None else None,
+            delivery_fee_cents=delivery.fee_cents,
+            first_order_discount_percent=first_order_discount_percent,
+        )
+        db.add(order)
+        try:
+            db.commit()
+            db.refresh(order)
+        except IntegrityError:
+            # Another request with the same key won the insert race. Never
+            # create a second provider session or second order for that retry.
+            db.rollback()
+            raced_attempt = _load_checkout_attempt(db, idempotency_key)
+            if not raced_attempt:
+                raise HTTPException(status_code=503, detail="Unable to start checkout. Please retry.")
+            existing_response = _existing_checkout_response(
+                raced_attempt,
+                response=response,
+                fingerprint=request_fingerprint,
+                payment_method=payment_method,
+            )
+            if existing_response:
+                return existing_response
+            raise HTTPException(status_code=409, detail="Checkout initialization is in progress. Please retry shortly.")
 
     if user and normalized_phone and user.phone != normalized_phone:
         user.phone = normalized_phone
@@ -829,29 +979,31 @@ async def start_checkout(
     origin = settings.resolved_site_url()
     encoded_order_id = quote_plus(order.id)
 
-    record_payment_event_best_effort(
-        db,
-        order_id=order.id,
-        event="checkout_order_created",
-        provider=payment_method,
-        source="server",
-        message="Checkout order was created and is waiting for provider session setup.",
-        context={
-            "order_status": order.status.value,
-            "total_cents": computed_total,
-            "currency": order.currency,
-            "item_count": len(discounted_items),
-            "has_delivery_fee": bool(delivery.fee_cents and delivery.fee_cents > 0),
-            "delivery_fee_cents": delivery.fee_cents or 0,
-        },
-        request=request,
-    )
+    if is_new_attempt:
+        record_payment_event_best_effort(
+            db,
+            order_id=order.id,
+            event="checkout_order_created",
+            provider=payment_method,
+            source="server",
+            message="Checkout order was created and is waiting for provider session setup.",
+            context={
+                "order_status": order.status.value,
+                "total_cents": order.total_cents,
+                "currency": order.currency,
+                "item_count": len(order.items),
+                "has_delivery_fee": bool(order.delivery_fee_cents and order.delivery_fee_cents > 0),
+                "delivery_fee_cents": order.delivery_fee_cents or 0,
+            },
+            request=request,
+        )
 
     if payment_method == "paypal":
         try:
-            paypal_order = paypal_create_order(
+            paypal_order = await run_in_threadpool(
+                paypal_create_order,
                 order_id=order.id,
-                total_cents=computed_total,
+                total_cents=order.total_cents,
                 currency=order.currency,
                 payer_email=checkout_email,
                 payer_name=(user.name if user else None),
@@ -872,34 +1024,24 @@ async def start_checkout(
                 context={
                     "order_id": order.id,
                     "user_id": user_id,
-                    "item_count": len(discounted_items),
+                    "item_count": len(order.items),
                 },
                 exc=exc,
-            )
-            _set_order_failed_safely(
-                db,
-                order,
-                diagnostics=build_exception_failure_diagnostics(
-                    stage="paypal_order_create",
-                    code="paypal_order_create_failed",
-                    message="Failed to create the PayPal order.",
-                    exc=exc,
-                    provider="paypal",
-                ),
             )
             record_payment_event_best_effort(
                 db,
                 order_id=order.id,
-                event="paypal_order_create_failed",
+                event="paypal_order_create_retry_required",
                 provider="paypal",
                 source="server",
-                message="PayPal order creation failed before customer approval.",
-                context={"order_status": OrderStatus.FAILED.value},
+                message="PayPal order creation was inconclusive; the same idempotency key must retry.",
+                context={"order_status": OrderStatus.PENDING.value},
                 request=request,
             )
-            raise HTTPException(status_code=502, detail="Unable to start checkout.")
+            raise HTTPException(status_code=503, detail="Unable to start checkout. Please retry.")
 
         order.paypal_order_id = paypal_order.order_id
+        order.checkout_redirect_url = paypal_order.approve_url
         db.commit()
         _set_checkout_access_cookie(response, order.id)
         record_payment_event_best_effort(
@@ -927,33 +1069,21 @@ async def start_checkout(
     line_items = [
         {
             "price_data": {
-                "currency": "usd",
+                "currency": _SUPPORTED_CURRENCY.lower(),
                 "product_data": {
-                    "name": item["name"],
+                    "name": item.name,
                     "images": (
                         [image_url]
-                        if (image_url := _absolute_image_url(origin, item["image"]))
+                        if (image_url := _absolute_image_url(origin, item.image))
                         else []
                     ),
                 },
-                "unit_amount": item["unit_price"],
+                "unit_amount": item.price_cents,
             },
-            "quantity": item["quantity"],
+            "quantity": item.quantity,
         }
-        for item in discounted_items
+        for item in order.items
     ]
-
-    if delivery.fee_cents and delivery.fee_cents > 0:
-        line_items.append(
-            {
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {"name": "Delivery", "images": []},
-                    "unit_amount": delivery.fee_cents,
-                },
-                "quantity": 1,
-            }
-        )
 
     record_payment_event_best_effort(
         db,
@@ -965,14 +1095,15 @@ async def start_checkout(
         context={
             "expires_at": expires_at,
             "line_item_count": len(line_items),
-            "total_cents": computed_total,
+            "total_cents": order.total_cents,
             "currency": order.currency,
         },
         request=request,
     )
 
     try:
-        session = stripe.checkout.Session.create(
+        session = await run_in_threadpool(
+            stripe.checkout.Session.create,
             mode="payment",
             line_items=line_items,
             success_url=(
@@ -985,25 +1116,10 @@ async def start_checkout(
             payment_method_types=["card"],
             customer_email=checkout_email or None,
             expires_at=expires_at,
-            metadata={
-                "orderId": order.id,
-                "deliveryAddress": delivery_address or address_for_quote,
-                "deliveryAddressLine1": address_line1 or "",
-                "deliveryAddressLine2": address_line2 or "",
-                "deliveryCity": city or "",
-                "deliveryState": state or "",
-                "deliveryPostalCode": postal_code or "",
-                "deliveryCountry": country or "",
-                "deliveryFloor": floor or "",
-                "deliveryDateTime": delivery_date_time or "",
-                "deliveryMiles": (
-                    f"{delivery.miles:.1f}" if delivery.miles is not None else ""
-                ),
-                "deliveryFeeCents": str(delivery.fee_cents or 0),
-                "firstOrderDiscountPercent": str(first_order_discount_percent),
-                "phone": normalized_phone,
-                "orderComment": order_comment or "",
-            },
+            # Stripe needs an opaque order binding only. Address, phone, and
+            # delivery notes remain in our database rather than being copied
+            # to provider metadata and webhook payloads.
+            metadata={"orderId": order.id},
             payment_intent_data={"metadata": {"orderId": order.id}},
             idempotency_key=f"stripe-checkout-{order.id}",
         )
@@ -1016,34 +1132,25 @@ async def start_checkout(
             context={
                 "order_id": order.id,
                 "user_id": user_id,
-                "item_count": len(discounted_items),
+                "item_count": len(order.items),
             },
             exc=exc,
-        )
-        _set_order_failed_safely(
-            db,
-            order,
-            diagnostics=build_exception_failure_diagnostics(
-                stage="stripe_checkout_create",
-                code="stripe_checkout_session_failed",
-                message="Failed to create the Stripe Checkout session.",
-                exc=exc,
-                provider="stripe",
-            ),
         )
         record_payment_event_best_effort(
             db,
             order_id=order.id,
-            event="stripe_checkout_create_failed",
+            event="stripe_checkout_create_retry_required",
             provider="stripe",
             source="server",
-            message="Stripe Checkout session creation failed.",
-            context={"order_status": OrderStatus.FAILED.value},
+            message="Stripe Checkout creation was inconclusive; the same idempotency key must retry.",
+            context={"order_status": OrderStatus.PENDING.value},
             request=request,
         )
-        raise HTTPException(status_code=502, detail="Unable to start checkout.")
+        raise HTTPException(status_code=503, detail="Unable to start checkout. Please retry.")
 
     order.stripe_session_id = session.id
+    order.stripe_payment_intent_id = _provider_id(getattr(session, "payment_intent", None))
+    order.checkout_redirect_url = session.url or None
     db.commit()
     record_payment_event_best_effort(
         db,
@@ -1070,17 +1177,6 @@ async def start_checkout(
             request=request,
             context={"order_id": order.id, "user_id": user_id},
         )
-        _set_order_failed_safely(
-            db,
-            order,
-            diagnostics=build_exception_failure_diagnostics(
-                stage="stripe_checkout_redirect",
-                code="stripe_session_missing_url",
-                message="Stripe created a checkout session without a redirect URL.",
-                provider="stripe",
-                extra_details={"Session ID": session.id},
-            ),
-        )
         record_payment_event_best_effort(
             db,
             order_id=order.id,
@@ -1089,10 +1185,10 @@ async def start_checkout(
             source="server",
             message="Stripe created a Checkout session without a redirect URL.",
             stripe_session_id=session.id,
-            context={"order_status": OrderStatus.FAILED.value},
+            context={"order_status": OrderStatus.PENDING.value},
             request=request,
         )
-        raise HTTPException(status_code=500, detail="Unable to start checkout.")
+        raise HTTPException(status_code=503, detail="Unable to start checkout. Please retry.")
     _set_checkout_access_cookie(response, order.id)
     return CheckoutResponse(
         url=session.url,
@@ -1145,7 +1241,7 @@ async def record_checkout_event(
 
     provider = _payment_provider_for_order(order, payload.provider)
     event_context = {
-        **_safe_checkout_event_context(payload.context),
+        **_safe_checkout_event_context(event_name, payload.context),
         "order_status": order.status.value,
         "client_event": event_name,
     }
@@ -1231,6 +1327,7 @@ async def cancel_checkout(
     )
 
     if order.status == OrderStatus.PAID:
+        await dispatch_pending_order_notifications(db, limit=2)
         record_payment_event_best_effort(
             db,
             order_id=order.id,
@@ -1264,7 +1361,9 @@ async def cancel_checkout(
     if order.stripe_session_id and settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key
         try:
-            session = stripe.checkout.Session.retrieve(order.stripe_session_id)
+            session = await run_in_threadpool(
+                stripe.checkout.Session.retrieve, order.stripe_session_id
+            )
         except Exception as exc:
             log_critical_event(
                 domain="payment",
@@ -1291,7 +1390,15 @@ async def cancel_checkout(
         if session:
             resolved_status = resolve_order_status_from_session(order, session)
             if resolved_status == OrderStatus.PAID:
-                _set_order_status_safely(db, order, OrderStatus.PAID)
+                marked_paid = mark_order_paid(
+                    db,
+                    order,
+                    stripe_payment_intent_id=_provider_id(
+                        getattr(session, "payment_intent", None)
+                    ),
+                )
+                if marked_paid:
+                    await dispatch_pending_order_notifications(db, limit=2)
                 record_payment_event_best_effort(
                     db,
                     order_id=order.id,
@@ -1338,7 +1445,9 @@ async def cancel_checkout(
             session_status = (getattr(session, "status", None) or "").lower()
             if session_status == "open":
                 try:
-                    stripe.checkout.Session.expire(order.stripe_session_id)
+                    await run_in_threadpool(
+                        stripe.checkout.Session.expire, order.stripe_session_id
+                    )
                     stripe_cancel_confirmed = True
                     record_payment_event_best_effort(
                         db,
@@ -1379,7 +1488,9 @@ async def cancel_checkout(
     if order.paypal_order_id and paypal_is_configured():
         paypal_order_payload = None
         try:
-            paypal_order_payload = paypal_get_order(order.paypal_order_id)
+            paypal_order_payload = await run_in_threadpool(
+                paypal_get_order, order.paypal_order_id
+            )
         except PayPalApiError as exc:
             log_critical_event(
                 domain="payment",
@@ -1405,7 +1516,13 @@ async def cancel_checkout(
                 order, paypal_order_payload
             )
             if resolved_status == OrderStatus.PAID:
-                _set_order_status_safely(db, order, OrderStatus.PAID)
+                marked_paid = mark_order_paid(
+                    db,
+                    order,
+                    paypal_capture_id=_capture_id or order.paypal_capture_id,
+                )
+                if marked_paid:
+                    await dispatch_pending_order_notifications(db, limit=2)
                 record_payment_event_best_effort(
                     db,
                     order_id=order.id,
@@ -1457,7 +1574,9 @@ async def cancel_checkout(
                 "PAYER_ACTION_REQUIRED",
             }:
                 try:
-                    paypal_void_order(order.paypal_order_id)
+                    await run_in_threadpool(
+                        paypal_void_order, order.paypal_order_id, request_id=order.id
+                    )
                     paypal_cancel_confirmed = True
                     record_payment_event_best_effort(
                         db,
@@ -1514,6 +1633,9 @@ async def cancel_checkout(
             context={"order_status": order.status.value},
             request=request,
         )
+        return CheckoutCancelResponse(canceled=False, status=order.status.value)
+
+    if order.status not in {OrderStatus.PENDING, OrderStatus.CANCELED, OrderStatus.FAILED}:
         return CheckoutCancelResponse(canceled=False, status=order.status.value)
 
     updated = db.execute(
@@ -1601,10 +1723,49 @@ async def checkout_status(
     paypal_sync_status = None
     if order.status == OrderStatus.PENDING:
         if order.stripe_session_id and settings.stripe_secret_key:
-            stripe_sync_status = sync_order_with_stripe(db, order)
+            stripe.api_key = settings.stripe_secret_key
+            try:
+                stripe_session = await run_in_threadpool(
+                    stripe.checkout.Session.retrieve, order.stripe_session_id
+                )
+            except Exception:
+                stripe_session = None
+            if stripe_session is not None:
+                stripe_sync_status = sync_order_with_stripe_payload(
+                    db, order, stripe_session
+                )
         if order.paypal_order_id and paypal_is_configured():
-            paypal_sync_status = sync_order_with_paypal(db, order)
+            try:
+                paypal_payload = await run_in_threadpool(
+                    paypal_get_order, order.paypal_order_id
+                )
+                if (paypal_payload.get("status") or "").upper() == "APPROVED":
+                    try:
+                        paypal_payload = await run_in_threadpool(
+                            paypal_capture_order,
+                            order.paypal_order_id,
+                            request_id=order.id,
+                        )
+                    except PayPalApiError as exc:
+                        if exc.status_code is None or exc.status_code >= 500:
+                            paypal_payload = None
+                        else:
+                            try:
+                                paypal_payload = await run_in_threadpool(
+                                    paypal_get_order, order.paypal_order_id
+                                )
+                            except PayPalApiError:
+                                paypal_payload = None
+            except PayPalApiError:
+                paypal_payload = None
+            if paypal_payload is not None:
+                paypal_sync_status = sync_order_with_paypal_payload(
+                    db, order, paypal_payload
+                )
         db.refresh(order)
+
+    if order.status == OrderStatus.PAID:
+        await dispatch_pending_order_notifications(db, limit=2)
 
     record_payment_event_best_effort(
         db,

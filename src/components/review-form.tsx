@@ -1,7 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
-import ImageWithFallback from "@/components/image-with-fallback";
+import { useState } from "react";
 import ReviewStars from "@/components/review-stars";
 import { clientFetch } from "@/lib/api-client";
 
@@ -10,30 +9,22 @@ type ReviewFormState = {
   email: string;
   text: string;
   rating: number;
-  image: string;
 };
 
 const REVIEW_TEXT_MAX_LENGTH = 1024;
-const REVIEW_IMAGE_MAX_WIDTH = 1200;
-const REVIEW_IMAGE_MAX_HEIGHT = 900;
 
 const initialState: ReviewFormState = {
   name: "",
   email: "",
   text: "",
   rating: 5,
-  image: "",
 };
 
 export default function ReviewForm() {
-  const fileInputId = useId();
   const [formState, setFormState] = useState<ReviewFormState>(initialState);
   const [submitStatus, setSubmitStatus] = useState<
     "idle" | "sending" | "sent" | "error"
   >("idle");
-  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [selectedFileName, setSelectedFileName] = useState("No file chosen");
 
   const updateField = <T extends keyof ReviewFormState>(
     key: T,
@@ -42,49 +33,6 @@ export default function ReviewForm() {
     setFormState((current) => ({ ...current, [key]: value }));
   };
   const textLength = formState.text.length;
-
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      setSelectedFileName("No file chosen");
-      return;
-    }
-
-    setSelectedFileName(file.name);
-
-    setUploading(true);
-    setUploadStatus("Uploading...");
-
-    const payload = new FormData();
-    payload.append("file", file);
-    payload.append("max_width", String(REVIEW_IMAGE_MAX_WIDTH));
-    payload.append("max_height", String(REVIEW_IMAGE_MAX_HEIGHT));
-    payload.append("format", "webp");
-
-    try {
-      const response = await clientFetch("/api/upload/review", {
-        method: "POST",
-        body: payload,
-      });
-      const data = (await response.json().catch(() => null)) as
-        | { url?: string; detail?: string }
-        | null;
-
-      if (!response.ok) {
-        setUploadStatus(data?.detail || "Upload failed.");
-      } else if (data?.url) {
-        updateField("image", data.url);
-        setUploadStatus("Upload complete.");
-      } else {
-        setUploadStatus("Upload complete, but no URL returned.");
-      }
-    } catch {
-      setUploadStatus("Upload failed.");
-    } finally {
-      setUploading(false);
-      event.target.value = "";
-    }
-  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -98,7 +46,6 @@ export default function ReviewForm() {
         email: formState.email.trim(),
         text: formState.text.trim().slice(0, REVIEW_TEXT_MAX_LENGTH),
         rating: formState.rating,
-        image: formState.image.trim() || null,
       }),
     });
 
@@ -109,8 +56,6 @@ export default function ReviewForm() {
 
     setSubmitStatus("sent");
     setFormState(initialState);
-    setSelectedFileName("No file chosen");
-    setUploadStatus(null);
   };
 
   return (
@@ -127,49 +72,7 @@ export default function ReviewForm() {
         </h3>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[0.92fr_1.08fr]">
-        <div className="min-w-0 space-y-4">
-          <div className="w-full min-w-0 overflow-hidden rounded-[24px] border border-stone-200/80 bg-white aspect-[4/3]">
-            <ImageWithFallback
-              src={formState.image}
-              alt="Review photo preview"
-              width={800}
-              height={600}
-              className="h-full w-full object-cover object-center"
-            />
-          </div>
-          <label
-            className="flex min-w-0 flex-col gap-2 text-sm text-stone-700"
-            htmlFor={fileInputId}
-          >
-            Upload photo (optional)
-            <span
-              className={`flex h-11 w-full min-w-0 items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 text-sm text-stone-700 transition ${
-                uploading ? "cursor-not-allowed opacity-70" : "cursor-pointer"
-              }`}
-            >
-              <span className="min-w-0 truncate">{selectedFileName}</span>
-              <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-stone-300 bg-white px-3 text-[10px] uppercase tracking-[0.2em] text-stone-600">
-                Browse
-              </span>
-            </span>
-            <input
-              id={fileInputId}
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange}
-              disabled={uploading}
-              className="sr-only"
-            />
-          </label>
-          {uploadStatus ? (
-            <p className="text-xs uppercase tracking-[0.2em] text-stone-500">
-              {uploadStatus}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="min-w-0 space-y-4">
+      <div className="min-w-0 space-y-4">
           <label className="flex min-w-0 flex-col gap-2 text-sm text-stone-700">
             Name
             <input
@@ -219,7 +122,9 @@ export default function ReviewForm() {
           <p className="text-right text-xs uppercase tracking-[0.18em] text-stone-500">
             {textLength} / {REVIEW_TEXT_MAX_LENGTH}
           </p>
-        </div>
+        <p className="rounded-2xl border border-stone-200 bg-white/70 px-4 py-3 text-sm text-stone-600">
+          Reviews are published after staff moderation. Photos can be added by our team after approval.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -232,7 +137,7 @@ export default function ReviewForm() {
         </button>
         {submitStatus === "sent" ? (
           <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">
-            Thank you. Your review was sent.
+            Thank you. Your review was sent for moderation.
           </p>
         ) : null}
         {submitStatus === "error" ? (

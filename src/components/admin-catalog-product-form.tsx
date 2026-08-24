@@ -10,13 +10,14 @@ type EditableCatalogType = "BALOONS" | "GIFTS" | "EVENT_SPACE";
 
 type TierDraft = {
   price: string;
+  title: string;
   description: string;
 };
 
 type ProductWithContent = Bouquet & {
   galleryImages?: string[];
   videoUrl?: string | null;
-  tiers?: Array<{ priceCents: number; description: string }>;
+  tiers?: Array<{ priceCents: number; title?: string | null; description: string }>;
 };
 
 type AdminCatalogProductFormProps = {
@@ -43,7 +44,7 @@ function SubmitButton({ label }: { label: string }) {
   );
 }
 
-const createTier = (): TierDraft => ({ price: "", description: "" });
+const createTier = (): TierDraft => ({ price: "", title: "", description: "" });
 
 export default function AdminCatalogProductForm({
   product,
@@ -60,11 +61,12 @@ export default function AdminCatalogProductForm({
     if (!isEventSpace) return [];
     const existing = product?.tiers || [];
     return existing.length
-      ? existing.map((tier) => ({
+        ? existing.map((tier) => ({
           price: (tier.priceCents / 100).toFixed(2),
+          title: tier.title || "",
           description: tier.description,
         }))
-      : [createTier()];
+      : [];
   });
   const [error, setError] = useState("");
 
@@ -105,11 +107,6 @@ export default function AdminCatalogProductForm({
     }
 
     if (isEventSpace) {
-      if (!tiers.length) {
-        event.preventDefault();
-        setError("Add at least one event tier.");
-        return;
-      }
       const invalidTier = tiers.some(
         (tier) => !tier.description.trim() || !Number.isFinite(Number(tier.price)) || Number(tier.price) < 0
       );
@@ -233,7 +230,7 @@ export default function AdminCatalogProductForm({
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold text-stone-900">Event tiers</h2>
                 <p className="text-sm leading-relaxed text-stone-600">
-                  Configure the price and description for each level of the event.
+                  Optional: configure the price and description for each level of the event.
                 </p>
               </div>
               <div className="space-y-3">
@@ -259,6 +256,15 @@ export default function AdminCatalogProductForm({
                         step="0.01"
                         value={tier.price}
                         onChange={(event) => updateTier(index, "price", event.target.value)}
+                        className={controlClass}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-2 text-sm text-stone-700">
+                      Title (optional)
+                      <input
+                        name="tierTitle"
+                        value={tier.title}
+                        onChange={(event) => updateTier(index, "title", event.target.value)}
                         className={controlClass}
                       />
                     </label>

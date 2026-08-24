@@ -19,6 +19,10 @@ from app.services.payment_diagnostics import (
     payment_success_values,
 )
 from app.services.payment_events import record_payment_event_best_effort
+from app.services.payment_notifications import (
+    enqueue_order_confirmation_notifications,
+    mark_order_paid,
+)
 from app.services.paypal import (
     PayPalApiError,
     paypal_capture_order,
@@ -128,8 +132,9 @@ def resolve_order_status_from_session(
         intent_status = _extract_payment_intent_status(payment_intent)
         if intent_status == "succeeded" and amount_matches and currency_matches:
             return OrderStatus.PAID
-        if intent_status in {"canceled", "requires_payment_method"}:
-            return OrderStatus.FAILED
+        # A Checkout PaymentIntent can fail and be retried while the Checkout
+        # session is still open. Only an expired session or explicit async
+        # failure webhook may close the order.
 
     return None
 
@@ -204,18 +209,21 @@ def _sync_with_stripe(db: Session, orders: Iterable[Order]) -> dict[str, OrderSt
             order, session, now_seconds=now_seconds
         )
         if next_status and next_status != order.status:
+            payment_intent_id = _provider_id(_read_stripe_attr(session, "payment_intent"))
             values = (
-                payment_success_values()
+                payment_success_values(stripe_payment_intent_id=payment_intent_id)
                 if next_status == OrderStatus.PAID
-                else payment_failure_values(
-                    build_stripe_session_failure_diagnostics(session)
-                )
+                else payment_failure_values(build_stripe_session_failure_diagnostics(session))
             )
-            db.execute(
+            updated = db.execute(
                 update(Order)
                 .where(Order.id == order.id, Order.status == OrderStatus.PENDING)
                 .values(**values)
             )
+            if not updated.rowcount:
+                continue
+            if next_status == OrderStatus.PAID:
+                enqueue_order_confirmation_notifications(db, order_id=order.id)
             apply_order_values(order, values)
             updates[order.id] = next_status
             sync_events.append(
@@ -223,9 +231,7 @@ def _sync_with_stripe(db: Session, orders: Iterable[Order]) -> dict[str, OrderSt
                     "order_id": order.id,
                     "next_status": next_status,
                     "stripe_session_id": order.stripe_session_id,
-                    "payment_intent_id": _provider_id(
-                        _read_stripe_attr(session, "payment_intent")
-                    ),
+                    "payment_intent_id": payment_intent_id,
                     "session_status": _read_stripe_attr(session, "status"),
                     "payment_status": _read_stripe_attr(session, "payment_status"),
                     "expires_at": _read_stripe_attr(session, "expires_at"),
@@ -318,7 +324,7 @@ def _sync_with_paypal(db: Session, orders: Iterable[Order]) -> dict[str, OrderSt
         status = (payload.get("status") or "").upper()
         if status == "APPROVED":
             try:
-                payload = paypal_capture_order(order.paypal_order_id)
+                payload = paypal_capture_order(order.paypal_order_id, request_id=order.id)
             except PayPalApiError as exc:
                 if exc.status_code is None or exc.status_code >= 500:
                     continue
@@ -339,11 +345,15 @@ def _sync_with_paypal(db: Session, orders: Iterable[Order]) -> dict[str, OrderSt
                     paypal_capture_id=capture_id or order.paypal_capture_id,
                 )
             )
-            db.execute(
+            updated = db.execute(
                 update(Order)
                 .where(Order.id == order.id, Order.status == OrderStatus.PENDING)
                 .values(**values)
             )
+            if not updated.rowcount:
+                continue
+            if next_status == OrderStatus.PAID:
+                enqueue_order_confirmation_notifications(db, order_id=order.id)
             apply_order_values(order, values)
             updates[order.id] = next_status
             sync_events.append(
@@ -382,6 +392,62 @@ def _sync_with_paypal(db: Session, orders: Iterable[Order]) -> dict[str, OrderSt
     return updates
 
 
+def sync_order_with_stripe_payload(
+    db: Session, order: Order, session: object
+) -> OrderStatus | None:
+    """Apply a previously fetched Stripe Checkout session to one order.
+
+    Keeping provider I/O separate lets async routes fetch via a thread pool
+    without moving a SQLAlchemy session across threads.
+    """
+    if order.status != OrderStatus.PENDING or not order.stripe_session_id:
+        return None
+    next_status = resolve_order_status_from_session(order, session)
+    if not next_status or next_status == order.status:
+        return None
+
+    payment_intent_id = _provider_id(_read_stripe_attr(session, "payment_intent"))
+    if next_status == OrderStatus.PAID:
+        if not mark_order_paid(
+            db,
+            order,
+            stripe_payment_intent_id=payment_intent_id,
+        ):
+            return None
+    else:
+        values = payment_failure_values(build_stripe_session_failure_diagnostics(session))
+        updated = db.execute(
+            update(Order)
+            .where(Order.id == order.id, Order.status == OrderStatus.PENDING)
+            .values(**values)
+        )
+        if not updated.rowcount:
+            return None
+        db.commit()
+        apply_order_values(order, values)
+    record_payment_event_best_effort(
+        db,
+        order_id=order.id,
+        event=(
+            "stripe_sync_marked_paid"
+            if next_status == OrderStatus.PAID
+            else "stripe_sync_marked_failed"
+        ),
+        provider="stripe",
+        source="server_sync",
+        message="Server-side Stripe sync resolved the order status.",
+        stripe_session_id=order.stripe_session_id,
+        payment_intent_id=payment_intent_id,
+        context={
+            "order_status_after": next_status.value,
+            "session_status": _read_stripe_attr(session, "status"),
+            "payment_status": _read_stripe_attr(session, "payment_status"),
+            "expires_at": _read_stripe_attr(session, "expires_at"),
+        },
+    )
+    return next_status
+
+
 def sync_order_with_stripe(db: Session, order: Order) -> OrderStatus | None:
     if (
         order.status != OrderStatus.PENDING
@@ -395,41 +461,56 @@ def sync_order_with_stripe(db: Session, order: Order) -> OrderStatus | None:
         session = stripe.checkout.Session.retrieve(order.stripe_session_id)
     except Exception:
         return None
+    return sync_order_with_stripe_payload(db, order, session)
 
-    next_status = resolve_order_status_from_session(order, session)
+
+def sync_order_with_paypal_payload(
+    db: Session, order: Order, payload: dict
+) -> OrderStatus | None:
+    """Apply a previously fetched PayPal payload to one order."""
+    if order.status != OrderStatus.PENDING or not order.paypal_order_id:
+        return None
+    next_status, capture_id = resolve_order_status_from_paypal_order(order, payload)
     if not next_status or next_status == order.status:
         return None
 
-    values = (
-        payment_success_values()
-        if next_status == OrderStatus.PAID
-        else payment_failure_values(build_stripe_session_failure_diagnostics(session))
-    )
-    db.execute(
-        update(Order)
-        .where(Order.id == order.id, Order.status == OrderStatus.PENDING)
-        .values(**values)
-    )
-    db.commit()
-    apply_order_values(order, values)
+    if next_status == OrderStatus.PAID:
+        if not mark_order_paid(
+            db,
+            order,
+            paypal_capture_id=capture_id or order.paypal_capture_id,
+        ):
+            return None
+    else:
+        values = payment_failure_values(
+            build_paypal_failure_diagnostics(payload),
+            paypal_capture_id=capture_id or order.paypal_capture_id,
+        )
+        updated = db.execute(
+            update(Order)
+            .where(Order.id == order.id, Order.status == OrderStatus.PENDING)
+            .values(**values)
+        )
+        if not updated.rowcount:
+            return None
+        db.commit()
+        apply_order_values(order, values)
     record_payment_event_best_effort(
         db,
         order_id=order.id,
         event=(
-            "stripe_sync_marked_paid"
+            "paypal_sync_marked_paid"
             if next_status == OrderStatus.PAID
-            else "stripe_sync_marked_failed"
+            else "paypal_sync_marked_failed"
         ),
-        provider="stripe",
+        provider="paypal",
         source="server_sync",
-        message="Server-side Stripe sync resolved the order status.",
-        stripe_session_id=order.stripe_session_id,
-        payment_intent_id=_provider_id(_read_stripe_attr(session, "payment_intent")),
+        message="Server-side PayPal sync resolved the order status.",
         context={
             "order_status_after": next_status.value,
-            "session_status": _read_stripe_attr(session, "status"),
-            "payment_status": _read_stripe_attr(session, "payment_status"),
-            "expires_at": _read_stripe_attr(session, "expires_at"),
+            "paypal_order_id": order.paypal_order_id,
+            "paypal_capture_id": capture_id,
+            "paypal_status": payload.get("status"),
         },
     )
     return next_status
@@ -451,7 +532,7 @@ def sync_order_with_paypal(db: Session, order: Order) -> OrderStatus | None:
     status = (payload.get("status") or "").upper()
     if status == "APPROVED":
         try:
-            payload = paypal_capture_order(order.paypal_order_id)
+            payload = paypal_capture_order(order.paypal_order_id, request_id=order.id)
         except PayPalApiError as exc:
             if exc.status_code is None or exc.status_code >= 500:
                 return None
@@ -460,46 +541,7 @@ def sync_order_with_paypal(db: Session, order: Order) -> OrderStatus | None:
             except PayPalApiError:
                 return None
 
-    next_status, capture_id = resolve_order_status_from_paypal_order(order, payload)
-    if not next_status or next_status == order.status:
-        return None
-
-    values = (
-        payment_success_values(
-            paypal_capture_id=capture_id or order.paypal_capture_id,
-        )
-        if next_status == OrderStatus.PAID
-        else payment_failure_values(
-            build_paypal_failure_diagnostics(payload),
-            paypal_capture_id=capture_id or order.paypal_capture_id,
-        )
-    )
-    db.execute(
-        update(Order)
-        .where(Order.id == order.id, Order.status == OrderStatus.PENDING)
-        .values(**values)
-    )
-    db.commit()
-    apply_order_values(order, values)
-    record_payment_event_best_effort(
-        db,
-        order_id=order.id,
-        event=(
-            "paypal_sync_marked_paid"
-            if next_status == OrderStatus.PAID
-            else "paypal_sync_marked_failed"
-        ),
-        provider="paypal",
-        source="server_sync",
-        message="Server-side PayPal sync resolved the order status.",
-        context={
-            "order_status_after": next_status.value,
-            "paypal_order_id": order.paypal_order_id,
-            "paypal_capture_id": capture_id,
-            "paypal_status": payload.get("status"),
-        },
-    )
-    return next_status
+    return sync_order_with_paypal_payload(db, order, payload)
 
 
 def sync_pending_orders(db: Session, *, limit: int = 200) -> dict[str, OrderStatus]:

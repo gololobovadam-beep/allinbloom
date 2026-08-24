@@ -1244,10 +1244,7 @@ export default function CartView({
       );
 
       const discountedPrice = discount
-        ? Math.max(
-            0,
-            Math.round(basePrice * (100 - discount.percent) / 100)
-          )
+        ? applyPercentDiscount(basePrice, discount.percent)
         : basePrice;
 
       return {

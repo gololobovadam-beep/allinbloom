@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from queue import Empty, Full, Queue
+from threading import Event, Thread
 from typing import Any
 
 import httpx
 from fastapi import Request
 
 from app.core.config import settings
+from app.core.rate_limit import client_rate_limit_key
 
 CRITICAL_LOGGER_NAME = "app.critical"
 DEFAULT_BETTERSTACK_INGEST_URL = "https://in.logs.betterstack.com"
@@ -86,20 +89,14 @@ def _extract_request_context(request: Request | None) -> dict[str, Any] | None:
     if request is None:
         return None
 
-    forwarded = request.headers.get("x-forwarded-for", "")
-    client_ip = ""
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
-    if not client_ip:
-        client_ip = request.headers.get("x-real-ip", "")
-    if not client_ip and request.client:
-        client_ip = request.client.host
-
     request_data = {
         "method": request.method,
         "path": request.url.path,
         "request_id": request.headers.get("x-request-id"),
-        "client_ip": client_ip or "unknown",
+        # Use exactly the same trusted-proxy policy as rate limiting.  Client
+        # supplied X-Forwarded-For/X-Real-IP must never poison incident logs
+        # when the application is deployed without a trusted proxy.
+        "client_ip": client_rate_limit_key(request),
     }
     return sanitize_context(request_data)
 
@@ -135,29 +132,84 @@ class _JsonFormatter(logging.Formatter):
 
 
 class _BetterStackHandler(logging.Handler):
+    """Ship logs off the request path through a bounded worker queue.
+
+    A synchronous network handler can pause an async request for its entire
+    HTTP timeout.  The queue intentionally drops excess telemetry under a
+    Better Stack outage instead of trading application availability for
+    observability.  Critical events still go to the local stderr handler.
+    """
+
+    _STOP = object()
+
     def __init__(self, source_token: str, ingest_url: str) -> None:
         super().__init__()
         self._source_token = source_token
         self._ingest_url = ingest_url.rstrip("/")
-        self._client = httpx.Client(timeout=2.5)
+        self._queue: Queue[bytes | object] = Queue(maxsize=1_000)
+        self._closed = Event()
+        self._worker = Thread(
+            target=self._send_loop,
+            name="betterstack-log-worker",
+            daemon=True,
+        )
+        self._worker.start()
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            rendered = self.format(record)
-            self._client.post(
-                self._ingest_url,
-                content=rendered.encode("utf-8"),
-                headers={
-                    "Authorization": f"Bearer {self._source_token}",
-                    "Content-Type": "application/json",
-                },
-            )
+            if self._closed.is_set():
+                return
+            rendered = self.format(record).encode("utf-8")
+            self._queue.put_nowait(rendered)
+        except Full:
+            # The console handler remains synchronous and provides a durable
+            # fallback for the process supervisor.  Do not recursively log a
+            # telemetry drop from a logging handler.
+            return
         except Exception:
-            # Never fail request flow because of observability transport.
+            # Never fail request flow because of logging/serialization.
             return
 
+    def _send_loop(self) -> None:
+        timeout = httpx.Timeout(timeout=2.5, connect=1.0)
+        with httpx.Client(timeout=timeout) as client:
+            while True:
+                payload = self._queue.get()
+                try:
+                    if payload is self._STOP:
+                        return
+                    client.post(
+                        self._ingest_url,
+                        content=payload,
+                        headers={
+                            "Authorization": f"Bearer {self._source_token}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                except Exception:
+                    # Logging transport must not affect application traffic.
+                    continue
+                finally:
+                    self._queue.task_done()
+
     def close(self) -> None:
-        self._client.close()
+        if not self._closed.is_set():
+            self._closed.set()
+            try:
+                self._queue.put_nowait(self._STOP)
+            except Full:
+                # Make room for shutdown without waiting on a slow network
+                # request.  The worker is daemonized as a final safeguard.
+                try:
+                    self._queue.get_nowait()
+                    self._queue.task_done()
+                except Empty:
+                    pass
+                try:
+                    self._queue.put_nowait(self._STOP)
+                except Full:
+                    pass
+            self._worker.join(timeout=2.0)
         super().close()
 
 

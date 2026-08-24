@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "All in Bloom local PostgreSQL",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "allinbloom",
+      "Username": "allinbloom",
+      "SSLMode": "prefer"
+    }
+  }
+}

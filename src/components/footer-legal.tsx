@@ -49,7 +49,7 @@ export default function FooterLegal() {
         onClose={() => setActiveNotice(null)}
         title="Privacy Policy"
         description="Effective date: August 2, 2026"
-        panelClassName="max-w-3xl"
+        panelClassName="legal-notice-modal max-w-3xl"
       >
         <div className="space-y-5">
           <LegalSection title="Our commitment">
@@ -175,7 +175,7 @@ export default function FooterLegal() {
         onClose={() => setActiveNotice(null)}
         title="Personal Data Processing Notice"
         description="Effective date: August 2, 2026"
-        panelClassName="max-w-3xl"
+        panelClassName="legal-notice-modal max-w-3xl"
       >
         <div className="space-y-5">
           <LegalSection title="Who is responsible for your data">

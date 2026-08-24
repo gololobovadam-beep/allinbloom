@@ -167,7 +167,11 @@ def downgrade():
     op.drop_index("ix_User_email", table_name="User")
     op.drop_table("User")
 
-    op.execute("DROP TYPE IF EXISTS \"OrderStatus\"")
-    op.execute("DROP TYPE IF EXISTS \"BouquetStyle\"")
-    op.execute("DROP TYPE IF EXISTS \"FlowerType\"")
-    op.execute("DROP TYPE IF EXISTS \"Role\"")
+    # SQLite has no standalone enum types; the PostgreSQL ENUM declarations
+    # above are represented as text there.  Avoid PostgreSQL-only DDL when
+    # using SQLite for local development and migration regression tests.
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("DROP TYPE IF EXISTS \"OrderStatus\"")
+        op.execute("DROP TYPE IF EXISTS \"BouquetStyle\"")
+        op.execute("DROP TYPE IF EXISTS \"FlowerType\"")
+        op.execute("DROP TYPE IF EXISTS \"Role\"")

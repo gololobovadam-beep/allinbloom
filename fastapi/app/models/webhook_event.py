@@ -13,4 +13,9 @@ class WebhookEvent(Base):
     id = Column(String, primary_key=True, default=generate_cuid)
     provider = Column(String, nullable=False)
     event_id = Column("eventId", String, nullable=False)
+    status = Column(String, nullable=False, default="PROCESSING", server_default="PROCESSING")
+    claimed_at = Column(
+        "claimedAt", DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    processed_at = Column("processedAt", DateTime(timezone=True), nullable=True)
     created_at = Column("createdAt", DateTime(timezone=True), server_default=func.now(), nullable=False)

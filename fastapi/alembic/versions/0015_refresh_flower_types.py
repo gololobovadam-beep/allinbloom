@@ -24,6 +24,30 @@ def upgrade():
         """
     )
 
+    # SQLite stores PostgreSQL ENUM values as plain text.  The data repair is
+    # still required there, but PostgreSQL's ALTER TYPE commands are not
+    # supported (and are unnecessary).
+    if op.get_bind().dialect.name == "sqlite":
+        op.execute(
+            """
+            UPDATE "Bouquet"
+            SET "flowerType" = 'HYDRANGEAS'
+            WHERE UPPER(COALESCE("flowerType", '')) = 'LILY'
+            """
+        )
+        op.execute(
+            """
+            UPDATE "Bouquet"
+            SET "style" = REPLACE(
+                REPLACE(COALESCE("style", ''), 'LILY', 'HYDRANGEAS'),
+                'lily',
+                'hydrangeas'
+            )
+            WHERE UPPER(COALESCE("style", '')) LIKE '%LILY%'
+            """
+        )
+        return
+
     op.execute('ALTER TYPE "FlowerType" RENAME TO "FlowerType_old"')
     op.execute(
         """
@@ -77,6 +101,37 @@ def downgrade():
         )
         """
     )
+
+    # See the SQLite branch in upgrade(): it has no native ENUM type to
+    # replace, so only restore the values.
+    if op.get_bind().dialect.name == "sqlite":
+        op.execute(
+            """
+            UPDATE "Bouquet"
+            SET "flowerType" = 'LILY'
+            WHERE UPPER(COALESCE("flowerType", '')) IN (
+                'HYDRANGEAS', 'SPRAY_ROSES', 'RANUNCULUSES'
+            )
+            """
+        )
+        op.execute(
+            """
+            UPDATE "Bouquet"
+            SET "style" = REPLACE(
+                REPLACE(
+                    REPLACE(UPPER(COALESCE("style", '')), 'HYDRANGEAS', 'LILY'),
+                    'SPRAY_ROSES',
+                    'LILY'
+                ),
+                'RANUNCULUSES',
+                'LILY'
+            )
+            WHERE UPPER(COALESCE("style", '')) LIKE '%HYDRANGEAS%'
+               OR UPPER(COALESCE("style", '')) LIKE '%SPRAY_ROSES%'
+               OR UPPER(COALESCE("style", '')) LIKE '%RANUNCULUSES%'
+            """
+        )
+        return
 
     op.execute('ALTER TYPE "FlowerType" RENAME TO "FlowerType_new"')
     op.execute(

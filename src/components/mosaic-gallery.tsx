@@ -7,6 +7,7 @@ type MosaicGalleryProps = {
   images: string[];
   alt: string;
   visibleLimit?: number;
+  showAll?: boolean;
   className?: string;
 };
 
@@ -17,18 +18,24 @@ const normalizeImages = (images: string[]) =>
     .filter((image, index, all) => all.indexOf(image) === index);
 
 /**
- * The public composition intentionally exposes a maximum of six images. This
- * keeps the admin order meaningful while allowing an unlimited stored gallery.
+ * The public composition is capped by default, while editorial cards can
+ * explicitly expose every uploaded image.
  */
 export default function MosaicGallery({
   images,
   alt,
   visibleLimit = 6,
+  showAll = false,
   className = "",
 }: MosaicGalleryProps) {
   const visibleImages = useMemo(
-    () => normalizeImages(images).slice(0, Math.max(1, visibleLimit)),
-    [images, visibleLimit]
+    () => {
+      const normalized = normalizeImages(images);
+      return showAll
+        ? normalized
+        : normalized.slice(0, Math.max(1, visibleLimit));
+    },
+    [images, showAll, visibleLimit]
   );
   const lightboxItems = useMemo(
     () =>

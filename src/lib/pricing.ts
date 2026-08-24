@@ -12,7 +12,10 @@ export const clampPercent = (value: number) =>
 
 export const applyPercentDiscount = (priceCents: number, percent: number) => {
   const clamped = clampPercent(percent);
-  return Math.max(0, Math.round(priceCents * (100 - clamped) / 100));
+  // Keep the same integer half-up rule as the payment backend. Decimal
+  // floating point plus language-specific rounding is not financial-safe.
+  const numerator = Math.max(0, Math.trunc(priceCents)) * (100 - clamped);
+  return Math.floor((numerator + 50) / 100);
 };
 
 type CategorySettings = Pick<

@@ -1,0 +1,154 @@
+name: allinbloom
+
+services:
+  postgres:
+    image: postgres:16.14-alpine3.24@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-allinbloom}
+      POSTGRES_USER: ${POSTGRES_USER:-allinbloom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-allinbloom_local_password_change_me}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-allinbloom}:${POSTGRES_PASSWORD:-allinbloom_local_password_change_me}@postgres:5432/${POSTGRES_DB:-allinbloom}
+      ENVIRONMENT: development
+      SITE_URL: http://localhost:${FRONTEND_PORT:-3000}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      MIGRATION_LOCK_TIMEOUT_SECONDS: ${MIGRATION_LOCK_TIMEOUT_SECONDS:-120}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-allinbloom.us@gmail.com}
+      SEED_DATABASE: ${SEED_DATABASE:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TRUST_PROXY_HEADERS: "false"
+      BETTERSTACK_SOURCE_TOKEN: ${BETTERSTACK_SOURCE_TOKEN:-}
+      BETTERSTACK_INGEST_URL: ${BETTERSTACK_INGEST_URL:-https://in.logs.betterstack.com}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-All in Bloom Floral Studio <allinbloom.us@gmail.com>}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-allinbloom.us@gmail.com}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      PAYPAL_ENV: ${PAYPAL_ENV:-sandbox}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_UPLOAD_PRESET: ${CLOUDINARY_UPLOAD_PRESET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        API_BASE_URL: http://backend:8000
+        NEXT_PUBLIC_SITE_URL: http://localhost:${FRONTEND_PORT:-3000}
+        NEXT_PUBLIC_GOOGLE_ENABLED: ${NEXT_PUBLIC_GOOGLE_ENABLED:-false}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
+        NEXT_PUBLIC_TIDIO_PUBLIC_KEY: ${NEXT_PUBLIC_TIDIO_PUBLIC_KEY:-}
+    environment:
+      API_BASE_URL: http://backend:8000
+      NEXT_PUBLIC_SITE_URL: http://localhost:${FRONTEND_PORT:-3000}
+      NEXT_PUBLIC_GOOGLE_ENABLED: ${NEXT_PUBLIC_GOOGLE_ENABLED:-false}
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+      NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
+      NEXT_PUBLIC_TIDIO_PUBLIC_KEY: ${NEXT_PUBLIC_TIDIO_PUBLIC_KEY:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+
+  payment-jobs:
+    # Starts only with `docker compose --profile workers up`. This is a
+    # singleton scheduler, not another web/API replica.
+    profiles: ["workers"]
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+    entrypoint: ["/app/scripts/run_payment_jobs.sh"]
+    restart: unless-stopped
+    deploy:
+      # Compose starts one replica by default; declaring it makes the
+      # singleton requirement visible to Compose/Swarm operators as well.
+      replicas: 1
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-allinbloom}:${POSTGRES_PASSWORD:-allinbloom_local_password_change_me}@postgres:5432/${POSTGRES_DB:-allinbloom}
+      ENVIRONMENT: development
+      SITE_URL: http://localhost:${FRONTEND_PORT:-3000}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      BETTERSTACK_SOURCE_TOKEN: ${BETTERSTACK_SOURCE_TOKEN:-}
+      BETTERSTACK_INGEST_URL: ${BETTERSTACK_INGEST_URL:-https://in.logs.betterstack.com}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-All in Bloom Floral Studio <allinbloom.us@gmail.com>}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-allinbloom.us@gmail.com}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      PAYPAL_ENV: ${PAYPAL_ENV:-sandbox}
+      CRON_SYNC_LIMIT: ${CRON_SYNC_LIMIT:-200}
+      CRON_INTERVAL_SECONDS: ${CRON_INTERVAL_SECONDS:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # The backend entrypoint owns the locked migration step.  Do not start
+      # reconciliation/outbox jobs against a database whose schema may still
+      # be upgrading.
+      backend:
+        condition: service_healthy
+
+  pgadmin:
+    # Development-only database UI.  It is opt-in so a normal local stack
+    # never starts an administrative surface by accident.
+    profiles: ["tools"]
+    image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@allinbloom.us}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-allinbloom-local-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+
+volumes:
+  postgres_data:
+  pgadmin_data:

@@ -24,7 +24,7 @@ export default function Footer() {
           <Link href="/balloons" className="block hover:text-stone-800">
             Balloons
           </Link>
-          <Link href="/gifts-balloons" className="block hover:text-stone-800">
+          <Link href="/gifts" className="block hover:text-stone-800">
             Gifts
           </Link>
           <Link href="/event-space" className="block hover:text-stone-800">

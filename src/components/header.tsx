@@ -2,11 +2,12 @@ import Link from "next/link";
 import Image from "next/image";
 import { getAuthSession } from "@/lib/auth-session";
 import CartBadge from "@/components/cart-badge";
+import AdminAlertsBadge from "@/components/admin-alerts-badge";
 
 const navigationItems = [
   { href: "/catalog", label: "FLOWERS" },
   { href: "/balloons", label: "BALOONS" },
-  { href: "/gifts-balloons", label: "GIFTS" },
+  { href: "/gifts", label: "GIFTS" },
   { href: "/event-space", label: "EVENT SPACE" },
   { href: "/reviews", label: "REVIEWS" },
   { href: "/contact", label: "CONTACT" },
@@ -14,6 +15,7 @@ const navigationItems = [
 
 export default async function Header() {
   const { user } = await getAuthSession();
+  const isAdmin = user?.role === "ADMIN";
   const isSignedIn = Boolean(user);
 
   return (
@@ -38,6 +40,15 @@ export default async function Header() {
                   {item.label}
                 </Link>
               ))}
+              {isAdmin ? (
+                <Link
+                  href="/admin"
+                  className="relative inline-flex items-center whitespace-nowrap hover:text-stone-700"
+                >
+                  Admin
+                  <AdminAlertsBadge />
+                </Link>
+              ) : null}
             </nav>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
@@ -56,6 +67,15 @@ export default async function Header() {
               {item.label}
             </Link>
           ))}
+          {isAdmin ? (
+            <Link
+              href="/admin"
+              className="relative inline-flex items-center whitespace-nowrap hover:text-stone-700"
+            >
+              Admin
+              <AdminAlertsBadge />
+            </Link>
+          ) : null}
         </nav>
       </div>
     </header>

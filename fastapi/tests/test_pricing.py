@@ -54,6 +54,7 @@ class PricingTests(unittest.TestCase):
     def test_apply_percent_discount_handles_boundaries(self):
         self.assertEqual(apply_percent_discount(10000, 25), 7500)
         self.assertEqual(apply_percent_discount(999, 33), 669)
+        self.assertEqual(apply_percent_discount(1, 50), 1)
         self.assertEqual(apply_percent_discount(10000, 200), 1000)
         self.assertEqual(apply_percent_discount(10000, -5), 10000)
 

@@ -25,6 +25,7 @@ class Bouquet(Base):
             '"catalogType" IN (\'FLOWERS\', \'BALOONS\', \'GIFTS\', \'EVENT_SPACE\')',
             name="ck_Bouquet_catalogType",
         ),
+        CheckConstraint('"currency" = \'USD\'', name="ck_Bouquet_currency_usd"),
     )
 
     id = Column(String, primary_key=True, default=generate_cuid)

@@ -15,9 +15,20 @@ class Order(Base):
     email = Column(String, nullable=True, index=True)
     phone = Column(String, nullable=True)
     stripe_session_id = Column("stripeSessionId", String, unique=True, nullable=True)
+    stripe_payment_intent_id = Column("stripePaymentIntentId", String, unique=True, nullable=True)
+    stripe_charge_id = Column("stripeChargeId", String, unique=True, nullable=True)
     paypal_order_id = Column("paypalOrderId", String, unique=True, nullable=True)
     paypal_capture_id = Column("paypalCaptureId", String, unique=True, nullable=True)
+    payment_provider = Column("paymentProvider", String, nullable=True)
+    checkout_idempotency_key = Column(
+        "checkoutIdempotencyKey", String, unique=True, nullable=True
+    )
+    checkout_request_fingerprint = Column("checkoutRequestFingerprint", String, nullable=True)
+    checkout_redirect_url = Column("checkoutRedirectUrl", String, nullable=True)
     total_cents = Column("totalCents", Integer, nullable=False)
+    refunded_cents = Column(
+        "refundedCents", Integer, nullable=False, default=0, server_default="0"
+    )
     currency = Column(String, default="USD", nullable=False)
     delivery_address = Column("deliveryAddress", String, nullable=True)
     delivery_address_line1 = Column("deliveryAddressLine1", String, nullable=True)

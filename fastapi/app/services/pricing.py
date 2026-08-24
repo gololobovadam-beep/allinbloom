@@ -24,7 +24,10 @@ def _catalog_type_value(bouquet) -> str:
 
 def apply_percent_discount(price_cents: int, percent: int) -> int:
     clamped = clamp_percent(percent)
-    return max(0, round(price_cents * (100 - clamped) / 100))
+    # All checkout prices are integer cents. Avoid Python's banker's rounding
+    # so the backend agrees exactly with the browser on x.5-cent discounts.
+    numerator = max(0, int(price_cents)) * (100 - clamped)
+    return (numerator + 50) // 100
 
 
 def _has_category_filters(settings) -> bool:

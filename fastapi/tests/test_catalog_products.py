@@ -22,6 +22,7 @@ from app.services.catalog_products import (
 class _Tier:
     id = "tier-1"
     price_cents = 12500
+    title = "Private event"
     description = "Private evening event"
 
 
@@ -71,6 +72,30 @@ class CatalogProductSchemaTests(unittest.TestCase):
         self.assertEqual(payload.catalog_type, CatalogType.GIFTS)
         self.assertEqual(payload.gallery_images, ["/images/gift-1.webp", "/images/gift-2.webp"])
 
+    def test_catalog_currency_is_normalized_to_usd_and_rejects_other_values(self):
+        payload = BouquetCreate.model_validate(
+            {
+                "catalogType": "GIFTS",
+                "name": "Gift box",
+                "description": "A thoughtful gift",
+                "priceCents": 9500,
+                "image": "/images/gift-1.webp",
+                "currency": " usd ",
+            }
+        )
+        self.assertEqual(payload.currency, "USD")
+        with self.assertRaises(ValueError):
+            BouquetCreate.model_validate(
+                {
+                    "catalogType": "GIFTS",
+                    "name": "Gift box",
+                    "description": "A thoughtful gift",
+                    "priceCents": 9500,
+                    "image": "/images/gift-1.webp",
+                    "currency": "EUR",
+                }
+            )
+
     def test_event_payload_uses_tiers_and_zero_legacy_price_when_omitted(self):
         payload = BouquetCreate.model_validate(
             {
@@ -78,11 +103,28 @@ class CatalogProductSchemaTests(unittest.TestCase):
                 "name": "Event space",
                 "description": "Private events",
                 "image": "/images/event.webp",
-                "tiers": [{"priceCents": 12000, "description": "Small event"}],
+                "tiers": [
+                    {
+                        "priceCents": 12000,
+                        "title": "Small event",
+                        "description": "Small event",
+                    }
+                ],
             }
         )
         self.assertEqual(payload.price_cents, 0)
+        self.assertEqual(payload.tiers[0].title, "Small event")
         self.assertEqual(payload.tiers[0].price_cents, 12000)
+        no_tiers_payload = BouquetCreate.model_validate(
+            {
+                "catalogType": "EVENT_SPACE",
+                "name": "Event space",
+                "description": "Private events",
+                "image": "/images/event.webp",
+            }
+        )
+        self.assertEqual(no_tiers_payload.price_cents, 0)
+        self.assertIsNone(no_tiers_payload.tiers)
         with self.assertRaises(ValueError):
             BouquetCreate.model_validate(
                 {
@@ -123,6 +165,7 @@ class CatalogProductSchemaTests(unittest.TestCase):
         self.assertEqual(output["catalogType"], "GIFTS")
         self.assertEqual(output["galleryImages"], ["/images/gift-1.webp", "/images/gift-2.webp"])
         self.assertEqual(output["videoUrl"], "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        self.assertEqual(output["tiers"][0]["title"], "Private event")
         self.assertEqual(output["tiers"][0]["priceCents"], 12500)
 
     def test_relation_replacements_preserve_existing_position_rows(self):
@@ -146,12 +189,18 @@ class CatalogProductSchemaTests(unittest.TestCase):
         self.assertEqual(product.gallery_image_rows[0].url, "/images/new-1.webp")
 
         tier_rows = [
-            SimpleNamespace(price_cents=1000, description="Old", position=0),
+            SimpleNamespace(price_cents=1000, title=None, description="Old", position=0),
         ]
         product.event_tiers = tier_rows
-        replace_event_tiers(product, [{"priceCents": 2500, "description": "New"}])
+        replace_event_tiers(
+            product,
+            [{"priceCents": 2500, "title": "Updated", "description": "New"}],
+        )
         self.assertIs(product.event_tiers[0], tier_rows[0])
         self.assertEqual(product.event_tiers[0].price_cents, 2500)
+        self.assertEqual(product.event_tiers[0].title, "Updated")
+        replace_event_tiers(product, [])
+        self.assertEqual(product.event_tiers, [])
 
         home_rows = [SimpleNamespace(url="/images/old-home.webp", position=0)]
         settings = SimpleNamespace(

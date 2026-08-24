@@ -16,7 +16,9 @@ class PaymentEvent(Base):
     order_id = Column(
         "orderId",
         String,
-        ForeignKey("Order.id", ondelete="CASCADE"),
+        # Payment events are the audit trail for a financial operation. Do
+        # not let an administrative order deletion erase that evidence.
+        ForeignKey("Order.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

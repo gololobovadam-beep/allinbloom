@@ -40,6 +40,16 @@ export const formatOrderStatus = (status: string) => {
       return "Payment failed";
     case "CANCELED":
       return "Canceled";
+    case "PARTIALLY_REFUNDED":
+      return "Partially refunded";
+    case "REFUNDED":
+      return "Refunded";
+    case "DISPUTED":
+      return "Payment disputed";
+    case "CHARGEBACK":
+      return "Chargeback";
+    case "REVERSED":
+      return "Payment reversed";
     default:
       return status;
   }

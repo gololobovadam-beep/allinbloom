@@ -59,10 +59,6 @@ class OrderSoftDeleteOut(SchemaBase):
     is_deleted: bool
 
 
-class OrderPermanentDeleteOut(SchemaBase):
-    deleted: bool
-
-
 class OrderCountOut(SchemaBase):
     count: int
 

@@ -31,6 +31,19 @@ def _unique_urls(values):
 
 
 def upgrade():
+    # Alembic creates ``alembic_version.version_num`` as VARCHAR(32) by
+    # default, while this historical revision identifier is longer. SQLite
+    # does not enforce that limit, but PostgreSQL does and otherwise rejects
+    # Alembic's version update after the schema changes have run.
+    if context.get_context().dialect.name == "postgresql":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=255),
+            existing_nullable=False,
+        )
+
     op.create_table(
         "CatalogCategory",
         sa.Column("id", sa.String(), nullable=False),
@@ -66,21 +79,39 @@ def upgrade():
     op.add_column("Bouquet", sa.Column("categoryId", sa.String(), nullable=True))
     op.add_column("Bouquet", sa.Column("videoUrl", sa.String(), nullable=True))
     op.execute('UPDATE "Bouquet" SET "catalogType" = \'FLOWERS\' WHERE "catalogType" IS NULL')
-    op.create_check_constraint(
-        "ck_Bouquet_catalogType",
-        "Bouquet",
-        '"catalogType" IN (\'FLOWERS\', \'BALOONS\', \'GIFTS\', \'EVENT_SPACE\')',
-    )
+    if context.get_context().dialect.name == "sqlite":
+        # SQLite cannot ALTER TABLE to add a constraint.  Batch mode rebuilds
+        # the table so local/test databases receive the same invariant and FK
+        # as PostgreSQL rather than silently skipping them.
+        with op.batch_alter_table("Bouquet", recreate="always") as batch_op:
+            batch_op.create_check_constraint(
+                "ck_Bouquet_catalogType",
+                '"catalogType" IN (\'FLOWERS\', \'BALOONS\', \'GIFTS\', \'EVENT_SPACE\')',
+            )
+            batch_op.create_foreign_key(
+                "fk_Bouquet_categoryId_CatalogCategory",
+                "CatalogCategory",
+                ["categoryId"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+    else:
+        op.create_check_constraint(
+            "ck_Bouquet_catalogType",
+            "Bouquet",
+            '"catalogType" IN (\'FLOWERS\', \'BALOONS\', \'GIFTS\', \'EVENT_SPACE\')',
+        )
     op.create_index("ix_Bouquet_catalogType", "Bouquet", ["catalogType"])
     op.create_index("ix_Bouquet_categoryId", "Bouquet", ["categoryId"])
-    op.create_foreign_key(
-        "fk_Bouquet_categoryId_CatalogCategory",
-        "Bouquet",
-        "CatalogCategory",
-        ["categoryId"],
-        ["id"],
-        ondelete="SET NULL",
-    )
+    if context.get_context().dialect.name != "sqlite":
+        op.create_foreign_key(
+            "fk_Bouquet_categoryId_CatalogCategory",
+            "Bouquet",
+            "CatalogCategory",
+            ["categoryId"],
+            ["id"],
+            ondelete="SET NULL",
+        )
 
     op.create_table(
         "BouquetGalleryImage",
@@ -103,7 +134,7 @@ def upgrade():
         sa.Column("description", sa.String(), nullable=False),
         sa.Column("position", sa.Integer(), nullable=False),
         sa.CheckConstraint("position >= 0", name="ck_EventTier_position_nonnegative"),
-        sa.CheckConstraint("priceCents >= 0", name="ck_EventTier_price_nonnegative"),
+        sa.CheckConstraint('"priceCents" >= 0', name="ck_EventTier_price_nonnegative"),
         sa.ForeignKeyConstraint(["bouquetId"], ["Bouquet.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("bouquetId", "position", name="uq_EventTier_bouquetId_position"),
@@ -224,13 +255,44 @@ def downgrade():
     op.drop_index("ix_BouquetGalleryImage_bouquetId", table_name="BouquetGalleryImage")
     op.drop_table("BouquetGalleryImage")
 
-    op.drop_constraint("fk_Bouquet_categoryId_CatalogCategory", "Bouquet", type_="foreignkey")
-    op.drop_constraint("ck_Bouquet_catalogType", "Bouquet", type_="check")
-    op.drop_index("ix_Bouquet_categoryId", table_name="Bouquet")
-    op.drop_index("ix_Bouquet_catalogType", table_name="Bouquet")
-    op.drop_column("Bouquet", "videoUrl")
-    op.drop_column("Bouquet", "categoryId")
-    op.drop_column("Bouquet", "catalogType")
+    if context.get_context().dialect.name == "sqlite":
+        op.drop_index("ix_Bouquet_categoryId", table_name="Bouquet")
+        op.drop_index("ix_Bouquet_catalogType", table_name="Bouquet")
+        # SQLite reflection does not retain foreign-key names.  Apply the
+        # convention used by this migration so the reflected FK can be
+        # removed by its stable application-level name.
+        with op.batch_alter_table(
+            "Bouquet",
+            recreate="always",
+            naming_convention={
+                "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+            },
+        ) as batch_op:
+            batch_op.drop_constraint("fk_Bouquet_categoryId_CatalogCategory", type_="foreignkey")
+            batch_op.drop_constraint("ck_Bouquet_catalogType", type_="check")
+            batch_op.drop_column("videoUrl")
+            batch_op.drop_column("categoryId")
+            batch_op.drop_column("catalogType")
+    else:
+        op.drop_constraint("fk_Bouquet_categoryId_CatalogCategory", "Bouquet", type_="foreignkey")
+        op.drop_constraint("ck_Bouquet_catalogType", "Bouquet", type_="check")
+        op.drop_index("ix_Bouquet_categoryId", table_name="Bouquet")
+        op.drop_index("ix_Bouquet_catalogType", table_name="Bouquet")
+        op.drop_column("Bouquet", "videoUrl")
+        op.drop_column("Bouquet", "categoryId")
+        op.drop_column("Bouquet", "catalogType")
 
     op.drop_index("ix_CatalogCategory_catalogType", table_name="CatalogCategory")
     op.drop_table("CatalogCategory")
+
+    # Restore the historical Alembic-version column width only after this
+    # revision's schema has been removed.  Alembic then writes the short 0020
+    # identifier, so the downgrade remains valid on PostgreSQL as well.
+    if context.get_context().dialect.name == "postgresql":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=255),
+            type_=sa.String(length=32),
+            existing_nullable=False,
+        )

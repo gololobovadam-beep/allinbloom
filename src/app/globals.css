@@ -170,6 +170,37 @@
     display: none;
   }
 
+  .legal-notice-modal {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(var(--brand-rgb), 0.72) rgba(var(--cream-rgb), 0.34);
+    scrollbar-gutter: stable;
+  }
+
+  .legal-notice-modal::-webkit-scrollbar {
+    width: 0.72rem;
+  }
+
+  .legal-notice-modal::-webkit-scrollbar-track {
+    margin: 1.75rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(var(--cream-rgb), 0.34);
+  }
+
+  .legal-notice-modal::-webkit-scrollbar-thumb {
+    min-height: 3rem;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, rgba(var(--brand-rgb), 0.86), rgba(var(--accent-rgb), 0.7))
+      padding-box;
+  }
+
+  .legal-notice-modal::-webkit-scrollbar-thumb:hover {
+    background:
+      linear-gradient(180deg, var(--brand-dark), rgba(var(--brand-rgb), 0.88))
+      padding-box;
+  }
+
   .select-field {
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");

@@ -24,6 +24,13 @@ const orderStatusBadgeClass = (status: Order["status"]) => {
       return "border-rose-200 bg-rose-100 text-rose-700";
     case "CANCELED":
       return "border-stone-300 bg-stone-200 text-stone-700";
+    case "PARTIALLY_REFUNDED":
+    case "REFUNDED":
+      return "border-sky-200 bg-sky-100 text-sky-700";
+    case "DISPUTED":
+    case "CHARGEBACK":
+    case "REVERSED":
+      return "border-violet-200 bg-violet-100 text-violet-700";
     default:
       return "border-stone-200 bg-white/80 text-stone-600";
   }
@@ -44,9 +51,8 @@ export default function AdminOrderRow({
   const [isLoading, setIsLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
-  const [isPermanentDeleting, setIsPermanentDeleting] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const isBusy = isLoading || isDeleting || isRestoring || isPermanentDeleting;
+  const isBusy = isLoading || isDeleting || isRestoring;
 
   const storeScrollPosition = () => {
     try {
@@ -163,33 +169,6 @@ export default function AdminOrderRow({
     }
   };
 
-  const permanentlyDeleteOrder = async () => {
-    if (isBusy) return;
-    setIsMenuOpen(false);
-    const confirmed = window.confirm(
-      "Permanently delete this order? This action cannot be undone."
-    );
-    if (!confirmed) return;
-
-    setIsPermanentDeleting(true);
-    try {
-      const response = await clientFetch(
-        `/api/admin/orders/${order.id}/permanent-delete`,
-        {
-          method: "DELETE",
-        },
-        true
-      );
-      if (!response.ok) {
-        return;
-      }
-      onRemoved(order.id);
-      window.dispatchEvent(new Event(ADMIN_ORDERS_BADGE_EVENT));
-    } finally {
-      setIsPermanentDeleting(false);
-    }
-  };
-
   return (
     <div className="relative rounded-[24px] border border-white/80 bg-white/70 p-4 shadow-sm">
       <div ref={menuRef} className="absolute right-4 top-4 z-20">
@@ -218,14 +197,6 @@ export default function AdminOrderRow({
                   className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs uppercase tracking-[0.18em] text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isRestoring ? "Restoring..." : "Restore"}
-                </button>
-                <button
-                  type="button"
-                  onClick={permanentlyDeleteOrder}
-                  disabled={isBusy}
-                  className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs uppercase tracking-[0.18em] text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isPermanentDeleting ? "Deleting..." : "Delete Forever"}
                 </button>
               </>
             ) : (

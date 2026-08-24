@@ -54,6 +54,37 @@ def _normalize_sql_expression(column_name: str) -> str:
     """
 
 
+def _sqlite_normalize_sql_expression(column_name: str) -> str:
+    """SQLite equivalent without PostgreSQL-only REGEXP_REPLACE/TRIM syntax."""
+    normalized = f"""
+    REPLACE(
+        REPLACE(
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            LOWER(COALESCE({column_name}, '')),
+                            'champange', 'yellow'
+                        ),
+                        'champagne', 'yellow'
+                    ),
+                    'blush', 'pink'
+                ),
+                'ivory', 'white'
+            ),
+            'ruby', 'burgundy'
+        ),
+        'sage', 'light blue'
+    )
+    """
+    # Normalize comma spacing and collapse the common runs of whitespace
+    # without relying on an extension function being registered in SQLite.
+    compact = f"""
+    REPLACE(REPLACE(REPLACE(REPLACE({normalized}, ', ', ','), ' ,', ','), ',,', ','), '  ', ' ')
+    """
+    return f"trim(REPLACE(REPLACE({compact}, ',', ', '), '  ', ' '), ', ')"
+
+
 def upgrade():
     op.execute(
         """
@@ -69,10 +100,15 @@ def upgrade():
         WHERE "categoryColor" IS NOT NULL
         """
     )
+    colors_expression = (
+        _sqlite_normalize_sql_expression('"colors"')
+        if op.get_bind().dialect.name == "sqlite"
+        else f"TRIM(BOTH ', ' FROM {_normalize_sql_expression('"colors"')})"
+    )
     op.execute(
         f"""
         UPDATE "Bouquet"
-        SET "colors" = TRIM(BOTH ', ' FROM {_normalize_sql_expression('"colors"')})
+        SET "colors" = {colors_expression}
         WHERE "colors" IS NOT NULL
         """
     )
@@ -93,37 +129,33 @@ def downgrade():
         WHERE "categoryColor" IS NOT NULL
         """
     )
-    op.execute(
-        """
-        UPDATE "Bouquet"
-        SET "colors" = TRIM(
-            BOTH ', ' FROM REGEXP_REPLACE(
+    legacy_colors = """
+    REPLACE(
+        REPLACE(
+            REPLACE(
                 REPLACE(
                     REPLACE(
-                        REPLACE(
-                            REPLACE(
-                                REPLACE(
-                                    LOWER(COALESCE("colors", '')),
-                                    'pink',
-                                    'blush'
-                                ),
-                                'white',
-                                'ivory'
-                            ),
-                            'burgundy',
-                            'ruby'
-                        ),
-                        'light blue',
-                        'sage'
+                        LOWER(COALESCE("colors", '')),
+                        'pink', 'blush'
                     ),
-                    'yellow',
-                    'champagne'
+                    'white', 'ivory'
                 ),
-                '\\s*,\\s*',
-                ', ',
-                'g'
-            )
-        )
+                'burgundy', 'ruby'
+            ),
+            'light blue', 'sage'
+        ),
+        'yellow', 'champagne'
+    )
+    """
+    colors_expression = (
+        f"trim(REPLACE(REPLACE(REPLACE(REPLACE({legacy_colors}, ', ', ','), ' ,', ','), ',', ', '), '  ', ' '), ', ')"
+        if op.get_bind().dialect.name == "sqlite"
+        else f"TRIM(BOTH ', ' FROM REGEXP_REPLACE({legacy_colors}, '\\s*,\\s*', ', ', 'g'))"
+    )
+    op.execute(
+        f"""
+        UPDATE "Bouquet"
+        SET "colors" = {colors_expression}
         WHERE "colors" IS NOT NULL
         """
     )

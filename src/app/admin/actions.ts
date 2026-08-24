@@ -6,6 +6,21 @@ import { parseBouquetForm, parseCatalogProductForm } from "@/lib/bouquet-form";
 import { requireAdmin } from "@/lib/auth-session";
 import { apiFetch } from "@/lib/api-server";
 
+const getApiErrorMessage = async (response: Response, fallback: string) => {
+  const body = (await response.json().catch(() => null)) as
+    | { detail?: string | Array<{ msg?: string }>; error?: { message?: string } }
+    | null;
+  const detail = body?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => item?.msg?.trim())
+      .filter((message): message is string => Boolean(message));
+    if (messages.length) return messages.join(" ");
+  }
+  return body?.error?.message?.trim() || fallback;
+};
+
 export async function createBouquet(formData: FormData) {
   await requireAdmin();
   const data = parseBouquetForm(formData);
@@ -19,7 +34,7 @@ export async function createBouquet(formData: FormData) {
     true
   );
   if (!response.ok) {
-    throw new Error("Unable to create bouquet.");
+    throw new Error(await getApiErrorMessage(response, "Unable to create bouquet."));
   }
   revalidatePath("/admin");
   redirect("/admin?toast=bouquet-added");
@@ -39,7 +54,7 @@ export async function updateBouquet(formData: FormData) {
     true
   );
   if (!response.ok) {
-    throw new Error("Unable to update bouquet.");
+    throw new Error(await getApiErrorMessage(response, "Unable to update bouquet."));
   }
   revalidatePath("/admin");
   redirect("/admin");
@@ -50,7 +65,7 @@ export async function deleteBouquet(formData: FormData) {
   const id = String(formData.get("id") || "");
   const response = await apiFetch(`/api/bouquets/${id}`, { method: "DELETE" }, true);
   if (!response.ok) {
-    throw new Error("Unable to delete bouquet.");
+    throw new Error(await getApiErrorMessage(response, "Unable to delete bouquet."));
   }
   revalidatePath("/admin");
 }
@@ -87,7 +102,7 @@ export async function createCatalogProduct(formData: FormData) {
     true
   );
   if (!response.ok) {
-    throw new Error("Unable to create catalog product.");
+    throw new Error(await getApiErrorMessage(response, "Unable to create catalog product."));
   }
   revalidatePath(route.adminPath);
   revalidatePath(route.storefrontPath);
@@ -112,7 +127,7 @@ export async function updateCatalogProduct(formData: FormData) {
     true
   );
   if (!response.ok) {
-    throw new Error("Unable to update catalog product.");
+    throw new Error(await getApiErrorMessage(response, "Unable to update catalog product."));
   }
   revalidatePath(route.adminPath);
   revalidatePath(route.storefrontPath);
@@ -132,7 +147,7 @@ export async function deleteCatalogProduct(formData: FormData) {
     true
   );
   if (!response.ok) {
-    throw new Error("Unable to delete catalog product.");
+    throw new Error(await getApiErrorMessage(response, "Unable to delete catalog product."));
   }
   revalidatePath(route.adminPath);
   revalidatePath(route.storefrontPath);

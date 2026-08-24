@@ -6,13 +6,13 @@ from app.schemas.base import SchemaBase
 
 
 class RequestCodeIn(SchemaBase):
-    email: str
+    email: str = Field(min_length=3, max_length=254)
 
 
 class VerifyCodeIn(SchemaBase):
-    email: str
-    code: str
-    name: str | None = None
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    name: str | None = Field(default=None, max_length=120)
 
 
 class GoogleSignInIn(SchemaBase):

@@ -28,6 +28,13 @@ const orderStatusBadgeClass = (status: OrderStatus) => {
       return "border-rose-200 bg-rose-100 text-rose-700";
     case "CANCELED":
       return "border-stone-300 bg-stone-200 text-stone-700";
+    case "PARTIALLY_REFUNDED":
+    case "REFUNDED":
+      return "border-sky-200 bg-sky-100 text-sky-700";
+    case "DISPUTED":
+    case "CHARGEBACK":
+    case "REVERSED":
+      return "border-violet-200 bg-violet-100 text-violet-700";
     default:
       return "border-stone-200 bg-white/80 text-stone-600";
   }

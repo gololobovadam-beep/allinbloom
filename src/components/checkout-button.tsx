@@ -14,6 +14,89 @@ type CheckoutResponseData = {
   message?: string;
 };
 
+const createIdempotencyKey = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  }
+  // Modern browsers expose Web Crypto. Throw rather than quietly using a
+  // predictable key that could disclose an in-progress checkout URL.
+  throw new Error("Secure random generator is unavailable.");
+};
+
+const CHECKOUT_ATTEMPT_TTL_MS = 30 * 60 * 1000;
+
+type CheckoutAttempt = {
+  fingerprint: string;
+  key: string;
+  storageKey: string | null;
+};
+
+const persistentAttemptStorageKey = async (fingerprint: string) => {
+  if (
+    typeof window === "undefined" ||
+    typeof crypto === "undefined" ||
+    !crypto.subtle
+  ) {
+    return null;
+  }
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(fingerprint)
+  );
+  const hash = Array.from(new Uint8Array(digest), (value) =>
+    value.toString(16).padStart(2, "0")
+  ).join("");
+  // Hashing keeps delivery/contact values out of browser storage keys.
+  return `aib_checkout_attempt_${hash}`;
+};
+
+const checkoutAttemptForPayload = async (
+  fingerprint: string
+): Promise<CheckoutAttempt> => {
+  const storageKey = await persistentAttemptStorageKey(fingerprint);
+  if (storageKey) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || "null") as
+        | { key?: unknown; createdAt?: unknown }
+        | null;
+      if (
+        typeof saved?.key === "string" &&
+        saved.key.length >= 16 &&
+        typeof saved.createdAt === "number" &&
+        Date.now() - saved.createdAt < CHECKOUT_ATTEMPT_TTL_MS
+      ) {
+        return { fingerprint, key: saved.key, storageKey };
+      }
+    } catch {
+      // Storage may be disabled. The in-memory retry key is still safe.
+    }
+  }
+
+  const key = createIdempotencyKey();
+  if (storageKey) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ key, createdAt: Date.now() }));
+    } catch {
+      // Continue without persistence when a browser blocks local storage.
+    }
+  }
+  return { fingerprint, key, storageKey };
+};
+
+const discardPersistedCheckoutAttempt = (attempt: CheckoutAttempt | null) => {
+  if (!attempt?.storageKey) return;
+  try {
+    localStorage.removeItem(attempt.storageKey);
+  } catch {
+    // Nothing else is required; a stale key naturally expires.
+  }
+};
+
 const recordCheckoutEvent = async (
   event: string,
   data: CheckoutResponseData,
@@ -95,6 +178,7 @@ export default function CheckoutButton({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
+  const checkoutAttemptRef = useRef<CheckoutAttempt | null>(null);
   const method = paymentMethod ?? "stripe";
   const buttonLabel = label ?? (method === "paypal" ? "Pay with PayPal" : "Checkout");
 
@@ -147,31 +231,50 @@ export default function CheckoutButton({
         ];
       });
 
+      const checkoutPayload = {
+        items: checkoutItems,
+        address: deliveryAddress,
+        addressLine1: deliveryAddressLine1,
+        addressLine2: deliveryAddressLine2,
+        city: deliveryCity,
+        state: deliveryState,
+        postalCode: deliveryPostalCode,
+        country: deliveryCountry,
+        floor: deliveryFloor,
+        deliveryDateTime,
+        orderComment,
+        phone: phone || "",
+        email,
+        paymentMethod: method,
+        payment_method: method,
+      };
+      const fingerprint = JSON.stringify(checkoutPayload);
+      if (checkoutAttemptRef.current?.fingerprint !== fingerprint) {
+        checkoutAttemptRef.current = await checkoutAttemptForPayload(fingerprint);
+      }
+      const idempotencyKey = checkoutAttemptRef.current.key;
+
       const response = await clientFetch("/api/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
         body: JSON.stringify({
-          items: checkoutItems,
-          address: deliveryAddress,
-          addressLine1: deliveryAddressLine1,
-          addressLine2: deliveryAddressLine2,
-          city: deliveryCity,
-          state: deliveryState,
-          postalCode: deliveryPostalCode,
-          country: deliveryCountry,
-          floor: deliveryFloor,
-          deliveryDateTime,
-          orderComment,
-          phone: phone || "",
-          email,
-          paymentMethod: method,
-          payment_method: method,
+          ...checkoutPayload,
+          idempotencyKey,
+          idempotency_key: idempotencyKey,
         }),
       }, true);
 
       const data = (await response.json().catch(() => ({}))) as CheckoutResponseData;
 
       if (!response.ok) {
+        if (response.status === 409) {
+          // A closed attempt must not trap a customer on the same stored key.
+          discardPersistedCheckoutAttempt(checkoutAttemptRef.current);
+          checkoutAttemptRef.current = null;
+        }
         setLoading(false);
         onBusyChange?.(false);
         busyRef.current = false;

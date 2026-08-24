@@ -1,8 +1,13 @@
 import type { NextConfig } from 'next';
 
 const apiBase = (process.env.API_BASE_URL || "http://localhost:8000").replace(/\/+$/, "");
+// CI and local validation can use an isolated build directory without
+// touching a running development server's .next cache.
+const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  distDir,
   images: {
     unoptimized: true,
   },

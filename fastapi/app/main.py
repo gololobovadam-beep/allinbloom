@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
@@ -21,6 +21,7 @@ from app.api.routes import (
 )
 from app.core.config import settings
 from app.core.critical_logging import infer_domain_from_path, log_critical_event, setup_critical_logging
+from app.core.health import database_is_ready
 from app.core.request_size_limit import RequestBodyLimitMiddleware
 
 setup_critical_logging()
@@ -42,7 +43,7 @@ app.add_middleware(
     allow_origins=list(dict.fromkeys(origins)),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Requested-With"],
 )
 
 app.include_router(auth_router)
@@ -84,4 +85,16 @@ def validate_runtime_config() -> None:
 
 @app.get("/health")
 def health():
+    """Liveness probe: the process can serve an HTTP response."""
+    return {"ok": True}
+
+
+@app.get("/ready")
+def readiness():
+    """Readiness probe: the process can safely receive stateful traffic."""
+    if not database_is_ready():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is unavailable.",
+        )
     return {"ok": True}

@@ -60,6 +60,7 @@ fastapi/.env
 fastapi/.env.*
 !fastapi/.env.example
 .envrc
+compose.env
 
 # Local databases and temp files
 *.sqlite

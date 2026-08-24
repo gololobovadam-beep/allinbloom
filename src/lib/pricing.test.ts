@@ -78,6 +78,7 @@ describe("pricing helpers", () => {
     expect(applyPercentDiscount(10000, 25)).toBe(7500);
     expect(applyPercentDiscount(999, 33)).toBe(669);
     expect(applyPercentDiscount(10000, 200)).toBe(1000);
+    expect(applyPercentDiscount(1, 50)).toBe(1);
     expect(applyPercentDiscount(10000, -15)).toBe(10000);
   });
 });

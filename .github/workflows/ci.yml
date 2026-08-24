@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci
+      - run: npm run test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  backend:
+    name: Backend, migrations, and dependency audit
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16.14-alpine3.24@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+        env:
+          POSTGRES_DB: allinbloom
+          POSTGRES_USER: allinbloom
+          POSTGRES_PASSWORD: test-password
+        options: >-
+          --health-cmd "pg_isready -U allinbloom -d allinbloom"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql+psycopg://allinbloom:test-password@localhost:5432/allinbloom
+      ENVIRONMENT: test
+      SITE_URL: http://localhost:3000
+      AUTH_SECRET: ci-only-6SziIzzh7eVfv8CoQvzxySCTItNPLNzzF1uMNI6M
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: fastapi/requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r fastapi/requirements.lock
+      - name: Apply migrations through the production runner
+        working-directory: fastapi
+        run: python scripts/run_migrations.py
+      - name: Run backend tests
+        working-directory: fastapi
+        run: python -m unittest discover -s tests -v
+      - name: Audit locked Python dependencies
+        run: python -m pip install --disable-pip-version-check pip-audit==2.9.0 && pip-audit -r fastapi/requirements.lock
+      - name: Validate Docker Compose syntax
+        run: docker compose config --quiet

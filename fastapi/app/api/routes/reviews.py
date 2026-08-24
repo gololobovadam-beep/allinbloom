@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import logging
 import re
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_admin
 from app.core.config import settings
 from app.core.critical_logging import log_critical_event
+from app.core.rate_limit import SlidingWindowRateLimiter, enforce_rate_limit
 from app.models.review import Review
 from app.schemas.review import (
     ReviewAdminOut,
@@ -35,33 +37,11 @@ TEXT_MAX_LENGTH = 1024
 IMAGE_URL_MAX_LENGTH = 1200
 ADMIN_TIMEZONE = "America/Chicago"
 
-rate_limit: dict[str, dict[str, object]] = {}
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def _get_client_key(request: Request) -> str:
-    if settings.trust_proxy_headers:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            first = forwarded.split(",")[0].strip()
-            if first:
-                return first
-        real_ip = (request.headers.get("x-real-ip") or "").strip()
-        if real_ip:
-            return real_ip
-    return request.client.host if request.client and request.client.host else "unknown"
-
-
-def _allow_public_create(key: str) -> bool:
-    now = datetime.utcnow()
-    entry = rate_limit.get(key)
-    if not entry or entry["reset_at"] <= now:
-        rate_limit[key] = {"count": 1, "reset_at": now + PUBLIC_RATE_WINDOW}
-        return True
-    if entry["count"] >= PUBLIC_RATE_LIMIT:
-        return False
-    entry["count"] += 1
-    return True
+public_review_limiter = SlidingWindowRateLimiter(
+    limit=PUBLIC_RATE_LIMIT,
+    window_seconds=int(PUBLIC_RATE_WINDOW.total_seconds()),
+)
 
 
 def _normalize_name(value: str | None) -> str:
@@ -93,13 +73,52 @@ def _normalize_text(value: str | None) -> str:
     return normalized
 
 
+def _is_trusted_review_image_url(value: str) -> bool:
+    """Allow only same-origin assets or this deployment's Cloudinary delivery URLs.
+
+    Review images are rendered directly in every visitor's browser.  Accepting
+    arbitrary remote URLs would let a public submitter turn the review gallery
+    into a tracking or internal-network request surface.
+    """
+    if value.startswith("/") and not value.startswith("//") and "\\" not in value:
+        return True
+
+    cloud_name = (settings.cloudinary_cloud_name or "").strip()
+    if not cloud_name:
+        return False
+
+    parsed = urlsplit(value)
+    expected_prefix = f"/{cloud_name}/image/"
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "res.cloudinary.com"
+        and parsed.port in {None, 443}
+        and not parsed.username
+        and not parsed.password
+        and parsed.path.startswith(expected_prefix)
+    )
+
+
 def _normalize_image(value: str | None) -> str | None:
     normalized = (value or "").strip()
     if not normalized:
         return None
     if len(normalized) > IMAGE_URL_MAX_LENGTH:
         raise HTTPException(status_code=400, detail="Image URL is too long.")
+    if not _is_trusted_review_image_url(normalized):
+        raise HTTPException(
+            status_code=400,
+            detail="Review images must be an approved Cloudinary or local image URL.",
+        )
     return normalized
+
+
+def _public_review_out(review: Review) -> ReviewPublicOut:
+    """Never expose legacy arbitrary remote URLs to public visitors."""
+    output = ReviewPublicOut.model_validate(review)
+    if output.image and not _is_trusted_review_image_url(output.image):
+        return output.model_copy(update={"image": None})
+    return output
 
 
 def _normalize_rating(value: int | None) -> int:
@@ -119,7 +138,7 @@ def _normalize_created_at(value: datetime | None) -> datetime | None:
 
 @router.get("/reviews", response_model=list[ReviewPublicOut])
 def list_reviews(db: Session = Depends(get_db)):
-    return (
+    reviews = (
         db.execute(
             select(Review)
             .where(Review.is_active.is_(True))
@@ -128,6 +147,7 @@ def list_reviews(db: Session = Depends(get_db)):
         .scalars()
         .all()
     )
+    return [_public_review_out(review) for review in reviews]
 
 
 @router.post(
@@ -140,18 +160,17 @@ def create_review(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    key = _get_client_key(request)
-    if not _allow_public_create(key):
-        log_critical_event(
-            domain="messaging",
-            event="review_rate_limited",
-            message="Review create request blocked by rate limit.",
-            request=request,
-            level=logging.WARNING,
-        )
+    enforce_rate_limit(
+        request,
+        public_review_limiter,
+        detail="Too many requests. Please try again later.",
+    )
+    # Public submissions are moderated before publication.  Images are added
+    # only by staff after moderation through the authenticated upload route.
+    if (payload.image or "").strip():
         raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Please try again later.",
+            status_code=400,
+            detail="Photos can be added by staff after review moderation.",
         )
 
     review = Review(
@@ -159,14 +178,22 @@ def create_review(
         email=_normalize_email(payload.email),
         rating=_normalize_rating(payload.rating),
         text=_normalize_text(payload.text),
-        image=_normalize_image(payload.image),
-        is_active=True,
+        image=None,
+        is_active=False,
         is_read=False,
     )
     db.add(review)
     db.commit()
     db.refresh(review)
-    return review
+    log_critical_event(
+        domain="messaging",
+        event="review_submitted_for_moderation",
+        message="Public review submitted and queued for moderation.",
+        request=request,
+        context={"review_id": review.id, "rating": review.rating},
+        level=logging.INFO,
+    )
+    return _public_review_out(review)
 
 
 @router.get("/admin/reviews", response_model=list[ReviewAdminOut])

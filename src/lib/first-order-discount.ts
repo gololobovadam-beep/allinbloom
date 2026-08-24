@@ -1,6 +1,17 @@
 import type { Order } from "@/lib/api-types";
 
-const BLOCKING_STATUSES = new Set(["PENDING", "PAID"]);
+// A completed payment remains a prior order even if it was later refunded,
+// disputed, charged back, or reversed. Otherwise a refund could reopen a
+// one-time promotion indefinitely.
+const BLOCKING_STATUSES = new Set([
+  "PENDING",
+  "PAID",
+  "PARTIALLY_REFUNDED",
+  "REFUNDED",
+  "DISPUTED",
+  "CHARGEBACK",
+  "REVERSED",
+]);
 
 export const hasBlockingOrderHistory = (
   orders: Pick<Order, "status">[]

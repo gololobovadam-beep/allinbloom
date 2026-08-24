@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 import os
 import re
@@ -30,7 +31,9 @@ class SecurityTests(unittest.TestCase):
         self.assertFalse(security.verify_otp("000000", str(salt), str(code_hash)))
 
     def test_access_and_refresh_token_roundtrip(self):
-        with patch.object(settings, "auth_secret", "unit-test-secret"), patch.object(
+        with patch.object(
+            settings, "auth_secret", "unit-test-secret-with-at-least-32-characters"
+        ), patch.object(
             settings, "environment", "test"
         ):
             access = security.create_access_token({"sub": "user-1"}, expires_minutes=5)
@@ -47,7 +50,9 @@ class SecurityTests(unittest.TestCase):
                 security.decode_access_token(refresh)
 
     def test_checkout_access_token_is_bound_to_one_order_without_email_data(self):
-        with patch.object(settings, "auth_secret", "unit-test-secret"), patch.object(
+        with patch.object(
+            settings, "auth_secret", "unit-test-secret-with-at-least-32-characters"
+        ), patch.object(
             settings, "environment", "test"
         ):
             token = security.create_checkout_access_token(
@@ -61,7 +66,9 @@ class SecurityTests(unittest.TestCase):
         )
 
     def test_checkout_access_token_validates_required_order_id(self):
-        with patch.object(settings, "auth_secret", "unit-test-secret"), patch.object(
+        with patch.object(
+            settings, "auth_secret", "unit-test-secret-with-at-least-32-characters"
+        ), patch.object(
             settings, "environment", "test"
         ):
             missing_order = security._encode_token(
@@ -76,7 +83,9 @@ class SecurityTests(unittest.TestCase):
                 security.checkout_access_cookie_name("unsafe order id")
 
     def test_google_oauth_state_requires_matching_signed_cookie_value(self):
-        with patch.object(settings, "auth_secret", "unit-test-secret"), patch.object(
+        with patch.object(
+            settings, "auth_secret", "unit-test-secret-with-at-least-32-characters"
+        ), patch.object(
             settings, "environment", "test"
         ):
             state = security.create_google_oauth_state_token()
@@ -126,6 +135,51 @@ class SecurityTests(unittest.TestCase):
             settings, "auth_secret", "replace-with-a-long-random-string"
         ), patch.object(settings, "site_url", "https://example.com"):
             with self.assertRaisesRegex(RuntimeError, "AUTH_SECRET"):
+                settings.validate_runtime_configuration()
+
+    def test_runtime_config_requires_tls_postgresql_in_production(self):
+        common = {
+            "environment": "production",
+            "auth_secret": "test-secret-1234567890-ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            "site_url": "https://example.com",
+            "paypal_env": "sandbox",
+            "stripe_secret_key": None,
+            "stripe_webhook_secret": None,
+            "paypal_client_id": None,
+            "paypal_client_secret": None,
+            "paypal_webhook_id": None,
+        }
+
+        def validate(database_url: str) -> None:
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(settings, "database_url", database_url))
+                for key, value in common.items():
+                    stack.enter_context(patch.object(settings, key, value))
+                settings.validate_runtime_configuration()
+
+        with self.assertRaisesRegex(RuntimeError, "sslmode"):
+            validate("postgresql+psycopg://user:pass@db/app")
+
+        validate("postgresql+psycopg://user:pass@db/app?sslmode=require")
+
+    def test_runtime_config_requires_email_delivery_for_production_payments(self):
+        values = {
+            "environment": "production",
+            "auth_secret": "test-secret-1234567890-ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            "site_url": "https://example.com",
+            "database_url": "postgresql+psycopg://user:pass@db/app?sslmode=require",
+            "paypal_env": "live",
+            "stripe_secret_key": "sk_live_123",
+            "stripe_webhook_secret": "whsec_123",
+            "paypal_client_id": None,
+            "paypal_client_secret": None,
+            "paypal_webhook_id": None,
+            "resend_api_key": None,
+        }
+        with ExitStack() as stack:
+            for key, value in values.items():
+                stack.enter_context(patch.object(settings, key, value))
+            with self.assertRaisesRegex(RuntimeError, "RESEND_API_KEY"):
                 settings.validate_runtime_configuration()
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import logging
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -36,6 +36,9 @@ GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_OAUTH_STATE_COOKIE_NAME = "aib_google_oauth_state"
 GOOGLE_OAUTH_STATE_COOKIE_PATH = "/api/auth/google"
 otp_request_limiter = SlidingWindowRateLimiter(limit=20, window_seconds=15 * 60)
+otp_email_request_limiter = SlidingWindowRateLimiter(limit=5, window_seconds=15 * 60)
+otp_verify_limiter = SlidingWindowRateLimiter(limit=20, window_seconds=15 * 60)
+OTP_MAX_VERIFY_ATTEMPTS = 5
 
 
 def _cookie_secure() -> bool:
@@ -131,6 +134,11 @@ def _google_oauth_error_response(status_code: int, detail: str) -> JSONResponse:
     return response
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Normalize SQLite's naive timestamps while preserving production UTC values."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _build_auth_response(response: Response, user: User, db: Session) -> TokenOut:
     # A monotonic version gives logout and refresh server-side revocation.  A
     # token copied before a rotation can no longer authenticate once the new
@@ -219,49 +227,21 @@ async def request_code(
     email = payload.email.strip().lower()
     if "@" not in email:
         raise HTTPException(status_code=400, detail="Please provide a valid email address.")
-
-    now = datetime.now(timezone.utc)
-    window_start = now - timedelta(minutes=15)
-    recent_count = (
-        db.execute(
-            select(VerificationCode)
-            .where(VerificationCode.email == email, VerificationCode.created_at > window_start)
-        )
-        .scalars()
-        .all()
-    )
-    if len(recent_count) >= 5:
+    if not otp_email_request_limiter.allow(email):
         log_critical_event(
             domain="auth",
-            event="otp_rate_limit_reached",
-            message="OTP request rate limit reached.",
+            event="otp_email_rate_limit_reached",
+            message="OTP request rate limit reached for an email address.",
             request=request,
             context={"email": email},
             level=logging.WARNING,
         )
-        oldest = (
-            db.execute(
-                select(VerificationCode)
-                .where(VerificationCode.email == email, VerificationCode.created_at > window_start)
-                .order_by(VerificationCode.created_at.asc())
-            )
-            .scalars()
-            .first()
-        )
-        retry_after = 15 * 60
-        if oldest:
-            retry_after = max(
-                1,
-                int((oldest.created_at + timedelta(minutes=15) - now).total_seconds()),
-            )
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": "Too many requests. Please try again later.",
-                "retryAfterSec": retry_after,
-            },
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many verification-code requests. Please try again later.",
         )
 
+    now = datetime.now(timezone.utc)
     last_code = (
         db.execute(
             select(VerificationCode)
@@ -271,7 +251,7 @@ async def request_code(
         .scalars()
         .first()
     )
-    if last_code and (now - last_code.created_at).total_seconds() < 20:
+    if last_code and (now - _as_utc(last_code.created_at)).total_seconds() < 20:
         log_critical_event(
             domain="auth",
             event="otp_request_too_fast",
@@ -280,7 +260,7 @@ async def request_code(
             context={"email": email},
             level=logging.WARNING,
         )
-        retry_after = max(1, int(20 - (now - last_code.created_at).total_seconds()))
+        retry_after = max(1, int(20 - (now - _as_utc(last_code.created_at)).total_seconds()))
         return JSONResponse(
             status_code=429,
             content={
@@ -330,6 +310,11 @@ def verify_code(
     db: Session = Depends(get_db),
 ):
     _reject_cross_site_cookie_request(request)
+    enforce_rate_limit(
+        request,
+        otp_verify_limiter,
+        detail="Too many verification attempts. Please request a new code later.",
+    )
     email = payload.email.strip().lower()
     code = payload.code.strip()
 
@@ -338,11 +323,12 @@ def verify_code(
             select(VerificationCode)
             .where(VerificationCode.email == email)
             .order_by(VerificationCode.created_at.desc())
+            .with_for_update()
         )
         .scalars()
         .first()
     )
-    if not record or record.expires_at < datetime.now(timezone.utc):
+    if not record or _as_utc(record.expires_at) < datetime.now(timezone.utc):
         log_critical_event(
             domain="auth",
             event="otp_invalid_or_expired",
@@ -353,15 +339,20 @@ def verify_code(
         )
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
     if not verify_otp(code, record.salt, record.code_hash):
-        # Invalidate the active code after a failed attempt to limit brute-force attempts.
-        db.execute(delete(VerificationCode).where(VerificationCode.email == email))
+        record.attempt_count = int(record.attempt_count or 0) + 1
+        attempts_exhausted = record.attempt_count >= OTP_MAX_VERIFY_ATTEMPTS
+        if attempts_exhausted:
+            db.delete(record)
         db.commit()
         log_critical_event(
             domain="auth",
             event="otp_verification_failed",
             message="OTP verification failed: hash mismatch.",
             request=request,
-            context={"email": email},
+            context={
+                "email": email,
+                "attempts_exhausted": attempts_exhausted,
+            },
             level=logging.WARNING,
         )
         raise HTTPException(status_code=400, detail="Invalid or expired code.")

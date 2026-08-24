@@ -155,7 +155,11 @@ def _format_delivery_address(params: dict) -> str:
 
 async def send_email(to: Iterable[str], subject: str, text: str, html: str, reply_to: str) -> None:
     if not settings.resend_api_key:
-        return
+        # A caller that records delivery success must never interpret a
+        # missing provider credential as a sent message.  In particular, the
+        # payment outbox will retain and retry this work instead of marking a
+        # paid order's confirmation as delivered forever.
+        raise EmailDeliveryError("RESEND_API_KEY is not configured.")
     payload = {
         "from": settings.email_from,
         "to": list(to),

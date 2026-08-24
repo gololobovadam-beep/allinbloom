@@ -162,13 +162,15 @@ def replace_home_gallery_images(store_settings, image_values: Iterable[object]) 
 
 
 def replace_event_tiers(bouquet: Bouquet, tiers: Iterable[object]) -> None:
-    normalized_rows: list[tuple[int, str]] = []
+    normalized_rows: list[tuple[int, str | None, str]] = []
     for raw in tiers:
         if isinstance(raw, dict):
             raw_price = raw.get("price_cents", raw.get("priceCents"))
+            raw_title = raw.get("title")
             raw_description = raw.get("description")
         else:
             raw_price = getattr(raw, "price_cents", None)
+            raw_title = getattr(raw, "title", None)
             raw_description = getattr(raw, "description", None)
         try:
             price_cents = int(raw_price)
@@ -177,26 +179,29 @@ def replace_event_tiers(bouquet: Bouquet, tiers: Iterable[object]) -> None:
         description = str(raw_description or "").strip()
         if price_cents < 0 or price_cents > 100_000_000:
             raise HTTPException(status_code=422, detail="Tier price is out of range.")
+        title = str(raw_title or "").strip() or None
+        if title and len(title) > 200:
+            raise HTTPException(status_code=422, detail="Tier title is invalid.")
         if not description or len(description) > MAX_TIER_DESCRIPTION_LENGTH:
             raise HTTPException(status_code=422, detail="Tier description is invalid.")
-        normalized_rows.append((price_cents, description))
+        normalized_rows.append((price_cents, title, description))
 
-    if not normalized_rows:
-        raise HTTPException(status_code=422, detail="At least one event tier is required.")
     if len(normalized_rows) > 50:
         raise HTTPException(status_code=422, detail="At most 50 event tiers are allowed.")
 
     # Retain rows by ordinal for the same unique-position safety as galleries.
     existing_rows = list(bouquet.event_tiers)
-    for position, (price_cents, description) in enumerate(normalized_rows):
+    for position, (price_cents, title, description) in enumerate(normalized_rows):
         if position < len(existing_rows):
             existing_rows[position].price_cents = price_cents
+            existing_rows[position].title = title
             existing_rows[position].description = description
             existing_rows[position].position = position
         else:
             bouquet.event_tiers.append(
                 EventTier(
                     price_cents=price_cents,
+                    title=title,
                     description=description,
                     position=position,
                 )

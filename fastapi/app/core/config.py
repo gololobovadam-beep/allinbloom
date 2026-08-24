@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 _LOCAL_ENVIRONMENTS = {"development", "dev", "local", "test"}
@@ -120,6 +120,71 @@ class Settings(BaseSettings):
             raise RuntimeError("SITE_URL must be an absolute http(s) URL.")
         if self.is_production() and parsed_site_url.scheme != "https":
             raise RuntimeError("SITE_URL must use HTTPS in production.")
+
+        database_url = self.normalized_database_url()
+        if not database_url:
+            raise RuntimeError("DATABASE_URL must be configured before the API can start.")
+        parsed_database_url = urlparse(database_url)
+        database_scheme = parsed_database_url.scheme.lower()
+        supported_database_schemes = {
+            "postgresql",
+            "postgresql+psycopg",
+            "sqlite",
+            "sqlite+pysqlite",
+        }
+        if database_scheme not in supported_database_schemes:
+            raise RuntimeError("DATABASE_URL must use a supported SQLAlchemy database URL.")
+        if database_scheme.startswith("postgresql") and not parsed_database_url.hostname:
+            raise RuntimeError("PostgreSQL DATABASE_URL must include a host.")
+        if self.is_production():
+            if not database_scheme.startswith("postgresql"):
+                raise RuntimeError("Production DATABASE_URL must use PostgreSQL.")
+            sslmode = (parse_qs(parsed_database_url.query).get("sslmode") or [""])[0].lower()
+            if sslmode not in {"require", "verify-ca", "verify-full"}:
+                raise RuntimeError(
+                    "Production DATABASE_URL must set sslmode=require, verify-ca, or verify-full."
+                )
+
+        paypal_environment = (self.paypal_env or "").strip().lower()
+        if paypal_environment not in {"sandbox", "live"}:
+            raise RuntimeError("PAYPAL_ENV must be either sandbox or live.")
+
+        if not self.is_production():
+            return
+
+        stripe_values = [
+            (self.stripe_secret_key or "").strip(),
+            (self.stripe_webhook_secret or "").strip(),
+        ]
+        if any(stripe_values) and not all(stripe_values):
+            raise RuntimeError(
+                "Production Stripe requires both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET."
+            )
+        if stripe_values[0] and not stripe_values[0].startswith("sk_live_"):
+            raise RuntimeError("Production STRIPE_SECRET_KEY must be a live sk_live_ key.")
+
+        paypal_values = [
+            (self.paypal_client_id or "").strip(),
+            (self.paypal_client_secret or "").strip(),
+            (self.paypal_webhook_id or "").strip(),
+        ]
+        if any(paypal_values) and not all(paypal_values):
+            raise RuntimeError(
+                "Production PayPal requires PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, and PAYPAL_WEBHOOK_ID."
+            )
+        if any(paypal_values) and paypal_environment != "live":
+            raise RuntimeError("Production PayPal credentials require PAYPAL_ENV=live.")
+
+        payment_processing_enabled = bool(stripe_values[0] or paypal_values[0])
+        if payment_processing_enabled:
+            if not (self.resend_api_key or "").strip():
+                raise RuntimeError(
+                    "Production payment processing requires RESEND_API_KEY for order confirmations."
+                )
+            if not (self.admin_email or "").strip() or not (self.email_from or "").strip():
+                raise RuntimeError(
+                    "Production payment processing requires ADMIN_EMAIL and EMAIL_FROM."
+                )
 
     @staticmethod
     def _is_safe_auth_secret(value: str) -> bool:

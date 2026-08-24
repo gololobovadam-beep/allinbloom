@@ -1,0 +1,16 @@
+.git
+.next
+.next-validation
+node_modules
+.venv
+.env
+.env.*
+coverage
+fastapi
+*.log
+*.sqlite
+*.sqlite3
+*.db
+Dockerfile
+docker-compose.yml
+compose.env

@@ -11,11 +11,13 @@ from app.schemas.base import SchemaBase
 MAX_GALLERY_IMAGES = 50
 MAX_IMAGE_URL_LENGTH = 2048
 MAX_VIDEO_URL_LENGTH = 2048
+MAX_TIER_TITLE_LENGTH = 200
 MAX_TIER_DESCRIPTION_LENGTH = 1200
 
 
 class EventTierIn(SchemaBase):
     price_cents: int = Field(ge=0, le=100_000_000)
+    title: Optional[str] = Field(default=None, max_length=MAX_TIER_TITLE_LENGTH)
     description: str = Field(min_length=1, max_length=MAX_TIER_DESCRIPTION_LENGTH)
 
     @field_validator("description")
@@ -25,6 +27,13 @@ class EventTierIn(SchemaBase):
         if not normalized:
             raise ValueError("Tier description is required.")
         return normalized
+
+    @field_validator("title")
+    @classmethod
+    def strip_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
 
 class EventTierOut(EventTierIn):
@@ -150,6 +159,16 @@ class _BouquetPayloadBase(SchemaBase):
             return None
         return str(value).strip()
 
+    @field_validator("currency")
+    @classmethod
+    def require_usd_currency(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if normalized != "USD":
+            raise ValueError("Only USD catalog prices are supported.")
+        return normalized
+
     @field_validator("gallery_images")
     @classmethod
     def validate_gallery_length(cls, value: list[str] | None) -> list[str] | None:
@@ -197,16 +216,13 @@ class BouquetCreate(_BouquetPayloadBase):
             if self.price_cents is None or self.price_cents <= 0:
                 raise ValueError("Price must be greater than 0 for purchasable products.")
         elif self.catalog_type == CatalogType.EVENT_SPACE:
-            # Event Space cards are booked through Instagram; their tiers carry
-            # the displayed prices while the legacy non-null column stores zero.
+            # Event Space cards are booked through Instagram, so the legacy
+            # non-null price column remains neutral whether or not tiers exist.
             if self.price_cents not in {None, 0}:
                 raise ValueError("Event Space pricing must be configured through tiers.")
             self.price_cents = 0
 
-        if self.catalog_type == CatalogType.EVENT_SPACE:
-            if not self.tiers:
-                raise ValueError("At least one tier is required for Event Space.")
-        elif self.tiers:
+        if self.catalog_type != CatalogType.EVENT_SPACE and self.tiers:
             raise ValueError("Tiers are only available for Event Space.")
 
         if self.video_url and self.catalog_type not in {

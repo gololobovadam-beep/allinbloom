@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from hashlib import sha256
 import time
 from typing import Any, Mapping
 
@@ -38,7 +39,7 @@ def paypal_webhook_is_configured() -> bool:
 
 def _paypal_base_url() -> str:
     env = (settings.paypal_env or "sandbox").strip().lower()
-    if env in {"live", "production"}:
+    if env == "live":
         return "https://api-m.paypal.com"
     return "https://api-m.sandbox.paypal.com"
 
@@ -48,6 +49,12 @@ def _format_amount(cents: int) -> str:
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
     return f"{value:.2f}"
+
+
+def _operation_request_id(operation: str, stable_id: str) -> str:
+    """Return a provider-safe deterministic idempotency key (max 108 chars)."""
+    digest = sha256(f"{operation}:{stable_id}".encode("utf-8")).hexdigest()
+    return f"aib-{operation}-{digest[:48]}"
 
 
 def _parse_amount_cents(value: object) -> int | None:
@@ -286,7 +293,7 @@ def paypal_create_order(
         "POST",
         "/v2/checkout/orders",
         json=payload,
-        headers={"PayPal-Request-Id": order_id},
+        headers={"PayPal-Request-Id": _operation_request_id("create", order_id)},
     )
 
     paypal_order_id = response.get("id")
@@ -303,12 +310,26 @@ def paypal_get_order(paypal_order_id: str) -> dict[str, Any]:
     return _paypal_request("GET", f"/v2/checkout/orders/{paypal_order_id}")
 
 
-def paypal_capture_order(paypal_order_id: str) -> dict[str, Any]:
-    return _paypal_request("POST", f"/v2/checkout/orders/{paypal_order_id}/capture")
+def paypal_capture_order(
+    paypal_order_id: str, *, request_id: str | None = None
+) -> dict[str, Any]:
+    stable_id = request_id or paypal_order_id
+    return _paypal_request(
+        "POST",
+        f"/v2/checkout/orders/{paypal_order_id}/capture",
+        headers={"PayPal-Request-Id": _operation_request_id("capture", stable_id)},
+    )
 
 
-def paypal_void_order(paypal_order_id: str) -> dict[str, Any]:
-    return _paypal_request("POST", f"/v2/checkout/orders/{paypal_order_id}/void")
+def paypal_void_order(
+    paypal_order_id: str, *, request_id: str | None = None
+) -> dict[str, Any]:
+    stable_id = request_id or paypal_order_id
+    return _paypal_request(
+        "POST",
+        f"/v2/checkout/orders/{paypal_order_id}/void",
+        headers={"PayPal-Request-Id": _operation_request_id("void", stable_id)},
+    )
 
 
 def paypal_extract_order_metadata(order: dict[str, Any]) -> dict[str, Any]:

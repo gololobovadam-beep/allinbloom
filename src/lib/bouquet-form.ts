@@ -56,7 +56,7 @@ export type CatalogProductFormPayload = {
   image5: string | null;
   image6: string | null;
   videoUrl: string | null;
-  tiers: Array<{ priceCents: number; description: string }>;
+  tiers: Array<{ priceCents: number; title: string | null; description: string }>;
 };
 
 const normalizeEnum = <T extends readonly string[]>(
@@ -192,6 +192,7 @@ export const parseCatalogProductForm = (
   );
   const discountNote = String(formData.get("discountNote") || "").trim();
   const rawTierPrices = formData.getAll("tierPrice");
+  const rawTierTitles = formData.getAll("tierTitle");
   const rawTierDescriptions = formData.getAll("tierDescription");
   const tiers = rawTierDescriptions
     .map((description, index) => {
@@ -202,10 +203,14 @@ export const parseCatalogProductForm = (
       }
       return {
         priceCents: Math.max(0, Math.round(price * 100)),
+        title: String(rawTierTitles[index] || "").trim() || null,
         description: normalizedDescription,
       };
     })
-    .filter((tier): tier is { priceCents: number; description: string } => Boolean(tier));
+    .filter(
+      (tier): tier is { priceCents: number; title: string | null; description: string } =>
+        Boolean(tier)
+    );
 
   return {
     catalogType,

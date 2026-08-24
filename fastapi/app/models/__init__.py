@@ -6,6 +6,8 @@ from app.models.event_tier import EventTier
 from app.models.home_gallery_image import HomeGalleryImage
 from app.models.order import Order
 from app.models.order_item import OrderItem
+from app.models.notification_outbox import NotificationOutbox
+from app.models.payment_ledger_entry import PaymentLedgerEntry
 from app.models.payment_event import PaymentEvent
 from app.models.promo_slide import PromoSlide
 from app.models.review import Review
@@ -25,6 +27,8 @@ __all__ = [
     "HomeGalleryImage",
     "Order",
     "OrderItem",
+    "NotificationOutbox",
+    "PaymentLedgerEntry",
     "PaymentEvent",
     "OrderStatus",
     "PromoSlide",

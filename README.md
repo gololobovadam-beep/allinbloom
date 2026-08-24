@@ -42,7 +42,72 @@ Frontend and backend are fully separated:
   - `python -m unittest discover -s tests -v`
 
 ## Docker
-Use `docker-compose.yml` to run:
-- `frontend` (Next.js on `:3000`)
-- `backend` (FastAPI on `:8000`)
-- `postgres` (PostgreSQL on `:5432`)
+For a complete local application stack (Next.js, FastAPI, PostgreSQL,
+migrations, and sample data), install Docker Desktop and run from the
+repository root:
+
+```bash
+docker compose up --build
+```
+
+If your Docker installation provides the legacy Compose command instead, replace
+`docker compose` with `docker-compose` in the commands below.
+
+Open:
+- Storefront: http://localhost:3000
+- FastAPI liveness endpoint: http://localhost:8000/health
+- FastAPI readiness endpoint (includes a database check): http://localhost:8000/ready
+
+pgAdmin is an opt-in local development tool. Start it only when needed:
+
+```bash
+docker compose --profile tools up --build
+```
+
+It is then available at http://localhost:5050. The default pgAdmin login is
+`admin@allinbloom.us` / `allinbloom-local-admin`.
+Its preconfigured server is named **All in Bloom local PostgreSQL**; use the
+PostgreSQL password `allinbloom_local_password_change_me` when pgAdmin asks for
+it. If you change the database name or credentials in `compose.env`, update the
+saved pgAdmin connection (host: `postgres`) to use the same values.
+
+The payment-recovery scheduler is also opt-in locally. It checks pending
+provider payments and delivers durable confirmation notifications at least once
+per minute; run exactly one instance for a database:
+
+```bash
+docker compose --profile workers up --build
+```
+
+The backend waits for PostgreSQL, takes a PostgreSQL advisory lock, runs the
+migrations, then loads sample data only into a fresh empty database. Existing
+local data is preserved on later `docker compose up` runs. PostgreSQL, FastAPI,
+and pgAdmin ports are bound to `127.0.0.1`, so they are not exposed to the local
+network.
+
+To customize ports, local credentials, the admin email, or optional provider
+keys, copy the template and start Compose with it:
+
+```bash
+cp compose.env.example compose.env
+docker compose --env-file compose.env up --build
+```
+
+On Windows PowerShell, replace `cp` with `Copy-Item`. Without a configured
+Resend or Google provider, sign-in intentionally remains unavailable; this stack
+does not add an insecure development-login bypass. If `AUTH_SECRET` is left
+blank, the backend generates a temporary local secret on each restart.
+
+To reset **all** local PostgreSQL and pgAdmin data, stop the stack and remove its
+volumes:
+
+```bash
+docker compose down -v
+```
+
+## Production operations
+
+`docker-compose.yml` is intentionally development-only: it uses localhost
+URLs, development mode, and optional local credentials. Do not deploy it to a
+public host. Production rollout, readiness, backup/restore, image-digest, and
+shared-rate-limit requirements are in [the operations runbook](docs/operations.md).

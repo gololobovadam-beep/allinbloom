@@ -6,7 +6,16 @@ import {
 export type FlowerType = (typeof FLOWER_TYPES_WITH_MIXED)[number];
 export type BouquetType = (typeof BOUQUET_TYPES)[number];
 export type CatalogType = "FLOWERS" | "BALOONS" | "GIFTS" | "EVENT_SPACE";
-export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "CANCELED";
+export type OrderStatus =
+  | "PENDING"
+  | "PAID"
+  | "FAILED"
+  | "CANCELED"
+  | "PARTIALLY_REFUNDED"
+  | "REFUNDED"
+  | "DISPUTED"
+  | "CHARGEBACK"
+  | "REVERSED";
 
 export type CatalogCategory = {
   id: string;
@@ -20,6 +29,7 @@ export type CatalogCategory = {
 export type EventTier = {
   id: string;
   priceCents: number;
+  title?: string | null;
   description: string;
 };
 

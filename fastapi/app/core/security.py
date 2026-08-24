@@ -7,7 +7,7 @@ import re
 from secrets import randbelow, token_hex, token_urlsafe
 from typing import Any
 
-from jose import jwt
+import jwt
 
 from app.core.config import settings
 
