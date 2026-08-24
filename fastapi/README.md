@@ -51,7 +51,7 @@ ports, local credentials, optional integrations, and reset instructions.
 - Keep `CLOUDINARY_UPLOAD_PRESET` server-side; do not expose it as a `NEXT_PUBLIC_*` variable.
 - Configure an ingress/reverse-proxy body limit as a second line of defense. The application limits normal JSON requests and webhooks to 1 MiB and image uploads to approximately 5.125 MiB before multipart parsing.
 - Use `/health` only for liveness and `/ready` for readiness. `/ready` returns `503` while PostgreSQL cannot execute a query, so load balancers must remove that replica from traffic.
-- Run `python scripts/run_migrations.py` as the release migration job (or let the container entrypoint run it). PostgreSQL deployments serialize concurrent replicas with an advisory lock; set `MIGRATION_LOCK_TIMEOUT_SECONDS` if the default 120 seconds is unsuitable.
+- Run `python scripts/run_migrations.py` as the release migration job. For Railway, configure it as the **Pre-deploy Command**, set `RUN_MIGRATIONS_ON_START=false`, and keep the start command to Uvicorn only. PostgreSQL deployments serialize concurrent replicas with an advisory lock; set `MIGRATION_LOCK_TIMEOUT_SECONDS` if the default 120 seconds is unsuitable.
 - The in-process rate limiter is a bounded emergency backstop. Enforce the authoritative public rate limit at a shared WAF/API gateway or Redis layer before scaling to multiple workers.
 - `requirements.lock` pins the complete resolved Python dependency set and its artifact hashes; Docker and CI install it with `--require-hashes`. Regenerate it with `uv pip compile --generate-hashes --no-cache --no-emit-index-url requirements.txt` whenever `requirements.txt` changes.
 

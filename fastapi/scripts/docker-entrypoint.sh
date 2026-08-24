@@ -16,8 +16,19 @@ if [ -z "${AUTH_SECRET:-}" ]; then
   esac
 fi
 
-echo "Applying database migrations..."
-python scripts/run_migrations.py
+case "${RUN_MIGRATIONS_ON_START:-true}" in
+  true|TRUE|1|yes|YES)
+    echo "Applying database migrations..."
+    python scripts/run_migrations.py
+    ;;
+  false|FALSE|0|no|NO)
+    echo "RUN_MIGRATIONS_ON_START is disabled; migrations must run in the release step."
+    ;;
+  *)
+    echo "RUN_MIGRATIONS_ON_START must be true or false." >&2
+    exit 1
+    ;;
+esac
 
 # Never put demo data into a newly created production database by default.
 # The development Compose service opts in explicitly with SEED_DATABASE=true.

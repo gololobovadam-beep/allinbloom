@@ -8,7 +8,11 @@ the internet.
 
 1. Build from the committed lock files and digest-pinned base images.
 2. Scan the built images and dependency locks, then deploy the new migration
-   runner once: `python scripts/run_migrations.py`.
+   runner once: `python scripts/run_migrations.py`. On Railway, make this the
+   service's **Pre-deploy Command**, set `RUN_MIGRATIONS_ON_START=false`, and
+   use a start command that only launches Uvicorn. Do not put `alembic upgrade`
+   in the start command: a blocked database lock would prevent the API from
+   listening and take the whole storefront offline.
 3. Roll out application replicas. The runner also takes a PostgreSQL advisory
    lock, so an accidental concurrent start cannot run Alembic in parallel.
 4. Route traffic only after `GET /ready` returns `200`. Keep `GET /health` as
