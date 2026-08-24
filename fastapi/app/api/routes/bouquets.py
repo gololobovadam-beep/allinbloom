@@ -214,6 +214,7 @@ def create_bouquet(
     data = payload.model_dump(exclude={"gallery_images", "tiers"})
     catalog_type = payload.catalog_type
     data["catalog_type"] = catalog_type.value
+    data["video_orientation"] = data.get("video_orientation") or "HORIZONTAL"
     incoming_gallery = payload.gallery_images
     incoming_tiers = payload.tiers
     data["category_id"] = _validate_category(

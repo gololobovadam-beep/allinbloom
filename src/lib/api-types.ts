@@ -59,6 +59,7 @@ export type Bouquet = {
   discountPercent: number;
   discountNote: string | null;
   videoUrl?: string | null;
+  videoOrientation?: "HORIZONTAL" | "VERTICAL";
   /** Ordered gallery. Public galleries deliberately expose only its first six images. */
   galleryImages?: string[];
   tiers?: EventTier[];

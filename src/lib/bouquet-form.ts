@@ -56,6 +56,7 @@ export type CatalogProductFormPayload = {
   image5: string | null;
   image6: string | null;
   videoUrl: string | null;
+  videoOrientation: "HORIZONTAL" | "VERTICAL";
   tiers: Array<{ priceCents: number; title: string | null; description: string }>;
 };
 
@@ -194,6 +195,10 @@ export const parseCatalogProductForm = (
   const rawTierPrices = formData.getAll("tierPrice");
   const rawTierTitles = formData.getAll("tierTitle");
   const rawTierDescriptions = formData.getAll("tierDescription");
+  const videoOrientation =
+    String(formData.get("videoOrientation") || "").trim().toUpperCase() === "VERTICAL"
+      ? "VERTICAL"
+      : "HORIZONTAL";
   const tiers = rawTierDescriptions
     .map((description, index) => {
       const normalizedDescription = String(description || "").trim();
@@ -249,6 +254,7 @@ export const parseCatalogProductForm = (
       catalogType === "BALOONS"
         ? null
         : String(formData.get("videoUrl") || "").trim() || null,
+    videoOrientation: catalogType === "BALOONS" ? "HORIZONTAL" : videoOrientation,
     tiers: catalogType === "EVENT_SPACE" ? tiers : [],
   };
 };

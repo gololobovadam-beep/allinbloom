@@ -63,6 +63,7 @@ class Bouquet(Base):
     discount_percent = Column("discountPercent", Integer, default=0, nullable=False)
     discount_note = Column("discountNote", String, nullable=True)
     video_url = Column("videoUrl", String, nullable=True)
+    video_orientation = Column("videoOrientation", String(10), default="HORIZONTAL", nullable=False)
     image = Column(String, nullable=False)
     image_2 = Column("image2", String, nullable=True)
     image_3 = Column("image3", String, nullable=True)

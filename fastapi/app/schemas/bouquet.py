@@ -77,6 +77,7 @@ class BouquetOut(SchemaBase):
     discount_percent: int
     discount_note: Optional[str] = None
     video_url: Optional[str] = None
+    video_orientation: str = "HORIZONTAL"
     gallery_images: list[str] = Field(
         default_factory=list,
         validation_alias=AliasChoices(
@@ -123,6 +124,7 @@ class _BouquetPayloadBase(SchemaBase):
     catalog_type: Optional[CatalogType] = None
     category_id: Optional[str] = Field(default=None, max_length=128)
     video_url: Optional[str] = Field(default=None, max_length=MAX_VIDEO_URL_LENGTH)
+    video_orientation: Optional[str] = Field(default=None, max_length=10)
     gallery_images: Optional[list[str]] = Field(
         default=None,
         max_length=MAX_GALLERY_IMAGES,
@@ -169,6 +171,16 @@ class _BouquetPayloadBase(SchemaBase):
             raise ValueError("Only USD catalog prices are supported.")
         return normalized
 
+    @field_validator("video_orientation")
+    @classmethod
+    def validate_video_orientation(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if normalized not in {"HORIZONTAL", "VERTICAL"}:
+            raise ValueError("Video orientation must be HORIZONTAL or VERTICAL.")
+        return normalized
+
     @field_validator("gallery_images")
     @classmethod
     def validate_gallery_length(cls, value: list[str] | None) -> list[str] | None:
@@ -198,6 +210,7 @@ class BouquetCreate(_BouquetPayloadBase):
     discount_note: Optional[str] = None
     image: Optional[str] = None
     catalog_type: CatalogType = CatalogType.FLOWERS
+    video_orientation: str = "HORIZONTAL"
 
     @model_validator(mode="after")
     def validate_catalog_specific_values(self):

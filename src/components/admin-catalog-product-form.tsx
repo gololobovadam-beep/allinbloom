@@ -17,6 +17,7 @@ type TierDraft = {
 type ProductWithContent = Bouquet & {
   galleryImages?: string[];
   videoUrl?: string | null;
+  videoOrientation?: "HORIZONTAL" | "VERTICAL";
   tiers?: Array<{ priceCents: number; title?: string | null; description: string }>;
 };
 
@@ -163,19 +164,32 @@ export default function AdminCatalogProductForm({
             </label>
           ) : null}
           {supportsVideo ? (
-            <label className="flex flex-col gap-2 text-sm text-stone-700">
-              YouTube video URL (optional)
-              <input
-                name="videoUrl"
-                type="url"
-                defaultValue={product?.videoUrl || ""}
-                placeholder="https://www.youtube.com/watch?v=..."
-                className={controlClass}
-              />
-              <span className="text-xs leading-relaxed text-stone-500">
-                Only a YouTube link is embedded on the storefront.
-              </span>
-            </label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-2 text-sm text-stone-700 sm:col-span-2">
+                YouTube video URL (optional)
+                <input
+                  name="videoUrl"
+                  type="url"
+                  defaultValue={product?.videoUrl || ""}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className={controlClass}
+                />
+                <span className="text-xs leading-relaxed text-stone-500">
+                  Only a YouTube link is embedded on the storefront.
+                </span>
+              </label>
+              <label className="flex flex-col gap-2 text-sm text-stone-700">
+                Video format
+                <select
+                  name="videoOrientation"
+                  defaultValue={product?.videoOrientation || "HORIZONTAL"}
+                  className={controlClass}
+                >
+                  <option value="HORIZONTAL">Horizontal</option>
+                  <option value="VERTICAL">Vertical</option>
+                </select>
+              </label>
+            </div>
           ) : null}
           {!isEventSpace ? (
             <div className="grid gap-4 sm:grid-cols-2">

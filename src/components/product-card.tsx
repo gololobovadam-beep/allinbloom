@@ -91,6 +91,8 @@ export default function ProductCard({
   const isEvent = kind === "event";
   const galleryImages = getBouquetGalleryImages(product);
   const videoId = getYouTubeVideoId(product.videoUrl);
+  const isVerticalVideo = product.videoOrientation === "VERTICAL";
+  const usesSplitVerticalMedia = Boolean(isVerticalVideo && videoId);
   const tiers = product.tiers || [];
   const hasSingleEventTier = isEvent && tiers.length === 1;
   const hasInlineEventAction = isEvent && tiers.length < 2;
@@ -154,21 +156,41 @@ export default function ProductCard({
         {product.name}
       </h2>
       <div
-        className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1.02fr)_minmax(0,0.98fr)] lg:gap-8"
+        className={`grid min-w-0 gap-5 ${
+          usesSplitVerticalMedia
+            ? "md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-5"
+            : "lg:grid-cols-[minmax(0,1.02fr)_minmax(0,0.98fr)] lg:gap-8"
+        }`}
         style={mediaHeightStyle}
       >
         <div
           ref={mediaRef}
-          className="min-w-0 space-y-5 lg:sticky lg:top-24 lg:self-start"
+          className={
+            usesSplitVerticalMedia
+              ? "grid min-w-0 gap-5 md:col-span-2 md:aspect-[45/32] md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:items-stretch"
+              : "min-w-0 space-y-5 lg:sticky lg:top-24 lg:self-start"
+          }
         >
           <MosaicGallery
             images={galleryImages}
             alt={`${product.name} gallery`}
-            showAll
-            className="[&>div:first-child]:aspect-[3/2]"
+            visibleLimit={6}
+            className={
+              usesSplitVerticalMedia
+                ? "md:flex md:h-full md:min-h-0 md:flex-col md:[&>div:first-child]:aspect-auto md:[&>div:first-child]:min-h-0 md:[&>div:first-child]:flex-1"
+                : "[&>div:first-child]:aspect-[3/2]"
+            }
           />
           {videoId ? (
-            <div className="glass aspect-[3/2] overflow-hidden rounded-[28px] border border-white/80 bg-stone-950 shadow-inner">
+            <div
+              className={`glass overflow-hidden rounded-[28px] border border-white/80 bg-stone-950 shadow-inner ${
+                usesSplitVerticalMedia
+                  ? "aspect-[9/16] md:h-full md:min-h-0 md:aspect-auto"
+                  : isVerticalVideo
+                    ? "aspect-[9/16]"
+                    : "aspect-[3/2]"
+              }`}
+            >
               <iframe
                 title={`${product.name} video`}
                 src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0`}
@@ -182,14 +204,18 @@ export default function ProductCard({
         </div>
         <div
           className={
-            isEvent && !hasInlineEventAction
-              ? "min-w-0 py-1 sm:py-2 lg:max-h-[var(--editorial-media-height)] lg:overflow-y-auto lg:pr-2"
-              : "flex min-w-0 flex-col gap-5 py-1 sm:gap-6 sm:py-2 lg:h-[var(--editorial-media-height)]"
+            usesSplitVerticalMedia
+              ? `min-w-0 py-1 sm:py-2 ${
+                  usesSplitVerticalMedia ? "md:col-span-2" : ""
+                }`
+              : isEvent && !hasInlineEventAction
+                ? "min-w-0 py-1 sm:py-2 lg:max-h-[var(--editorial-media-height)] lg:overflow-y-auto lg:pr-2"
+                : "flex min-w-0 flex-col gap-5 py-1 sm:gap-6 sm:py-2 lg:h-[var(--editorial-media-height)]"
           }
         >
           <div
             className={
-              isEvent && !hasInlineEventAction
+              usesSplitVerticalMedia || (isEvent && !hasInlineEventAction)
                 ? ""
                 : "min-h-0 flex-1 lg:overflow-y-auto lg:pr-2"
             }
@@ -199,7 +225,7 @@ export default function ProductCard({
             </p>
           </div>
           {!isEvent ? (
-            <div className="w-full max-w-[18rem] shrink-0 space-y-4">
+            <div className="mx-auto mt-6 w-full max-w-[18rem] shrink-0 space-y-4">
               <GiftPrice pricing={pricing} firstOrderDiscount={firstOrderDiscount} />
               {product.isSoldOut ? (
                 <div className="w-full rounded-full border border-stone-200 bg-stone-100 px-4 py-2.5 text-center text-xs uppercase tracking-[0.24em] text-stone-500">

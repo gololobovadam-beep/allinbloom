@@ -197,6 +197,7 @@ describe("parseCatalogProductForm", () => {
       priceCents: 9500,
       image: "/images/gift-box.webp",
       galleryImages: ["/images/gift-box.webp"],
+      videoOrientation: "HORIZONTAL",
       isActive: true,
       allowFlowerQuantity: false,
       tiers: [],

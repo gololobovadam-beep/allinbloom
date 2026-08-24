@@ -48,6 +48,7 @@ class _Gift:
     discount_percent = 0
     discount_note = None
     video_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    video_orientation = "VERTICAL"
     gallery_image_urls = ["/images/gift-1.webp", "/images/gift-2.webp"]
     event_tiers = [_Tier()]
     image = "/images/gift-1.webp"
@@ -165,6 +166,7 @@ class CatalogProductSchemaTests(unittest.TestCase):
         self.assertEqual(output["catalogType"], "GIFTS")
         self.assertEqual(output["galleryImages"], ["/images/gift-1.webp", "/images/gift-2.webp"])
         self.assertEqual(output["videoUrl"], "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        self.assertEqual(output["videoOrientation"], "VERTICAL")
         self.assertEqual(output["tiers"][0]["title"], "Private event")
         self.assertEqual(output["tiers"][0]["priceCents"], 12500)
 
