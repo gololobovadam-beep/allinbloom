@@ -48,7 +48,7 @@ ports, local credentials, optional integrations, and reset instructions.
 ## Production security requirements
 
 - Set `ENVIRONMENT=production` explicitly, use an HTTPS `SITE_URL`, and provide a unique `AUTH_SECRET` of at least 32 characters. The API refuses to start with an omitted environment, placeholder secret, or non-HTTPS production site URL.
-- Keep `CLOUDINARY_UPLOAD_PRESET` server-side; do not expose it as a `NEXT_PUBLIC_*` variable.
+- Configure a signed Cloudinary preset plus `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET`. Keep all three server-side; never expose them as `NEXT_PUBLIC_*` variables.
 - Configure an ingress/reverse-proxy body limit as a second line of defense. The application limits normal JSON requests and webhooks to 1 MiB and image uploads to approximately 5.125 MiB before multipart parsing.
 - Use `/health` only for liveness and `/ready` for readiness. `/ready` returns `503` while PostgreSQL cannot execute a query, so load balancers must remove that replica from traffic.
 - Run `python scripts/run_migrations.py` as the release migration job. For Railway, configure it as the **Pre-deploy Command**, set `RUN_MIGRATIONS_ON_START=false`, and keep the start command to Uvicorn only. PostgreSQL deployments serialize concurrent replicas with an advisory lock; set `MIGRATION_LOCK_TIMEOUT_SECONDS` if the default 120 seconds is unsuitable.

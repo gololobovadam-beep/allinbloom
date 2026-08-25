@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import time
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 import httpx
 
@@ -66,6 +69,41 @@ def _normalized_upload_options(
     }
 
 
+def _cloudinary_signature(parameters: dict[str, str], api_secret: str) -> str:
+    """Create the signature Cloudinary requires for an authenticated upload."""
+    to_sign = "&".join(f"{key}={value}" for key, value in sorted(parameters.items()))
+    return hashlib.sha1(f"{to_sign}{api_secret}".encode("utf-8")).hexdigest()
+
+
+def _authenticated_upload_data(
+    *,
+    max_width: int | None,
+    max_height: int | None,
+    fmt: str | None,
+) -> dict[str, str]:
+    cloud_name = (settings.cloudinary_cloud_name or "").strip()
+    upload_preset = (settings.cloudinary_upload_preset or "").strip()
+    api_key = (settings.cloudinary_api_key or "").strip()
+    api_secret = (settings.cloudinary_api_secret or "").strip()
+    if not all((cloud_name, upload_preset, api_key, api_secret)):
+        raise HTTPException(status_code=500, detail="Cloudinary not configured")
+
+    signed_parameters = {
+        "upload_preset": upload_preset,
+        **_normalized_upload_options(
+            max_width=max_width,
+            max_height=max_height,
+            fmt=fmt,
+        ),
+        "timestamp": str(int(time.time())),
+    }
+    return {
+        **signed_parameters,
+        "api_key": api_key,
+        "signature": _cloudinary_signature(signed_parameters, api_secret),
+    }
+
+
 async def _read_and_validate_file(file: UploadFile) -> bytes:
     content_type = (file.content_type or "").lower().strip()
     if content_type not in ALLOWED_CONTENT_TYPES:
@@ -91,18 +129,16 @@ async def _upload_to_cloudinary(
     max_height: int | None = None,
     fmt: str | None = None,
 ) -> UploadResponse:
-    if not settings.cloudinary_cloud_name or not settings.cloudinary_upload_preset:
+    cloud_name = (settings.cloudinary_cloud_name or "").strip()
+    if not cloud_name:
         raise HTTPException(status_code=500, detail="Cloudinary not configured")
 
-    url = f"https://api.cloudinary.com/v1_1/{settings.cloudinary_cloud_name}/image/upload"
-    data = {
-        "upload_preset": settings.cloudinary_upload_preset,
-        **_normalized_upload_options(
-            max_width=max_width,
-            max_height=max_height,
-            fmt=fmt,
-        ),
-    }
+    url = f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload"
+    data = _authenticated_upload_data(
+        max_width=max_width,
+        max_height=max_height,
+        fmt=fmt,
+    )
     files = {"file": (file.filename, content, file.content_type)}
 
     async with httpx.AsyncClient(timeout=20) as client:
@@ -122,7 +158,7 @@ async def _upload_to_cloudinary(
         raise HTTPException(status_code=response.status_code, detail=message)
 
     raw_url = payload.get("secure_url") or payload.get("url") or ""
-    expected_prefix = f"https://res.cloudinary.com/{settings.cloudinary_cloud_name}/image/"
+    expected_prefix = f"https://res.cloudinary.com/{cloud_name}/image/"
     if not isinstance(raw_url, str) or not raw_url.startswith(expected_prefix):
         raise HTTPException(status_code=502, detail="Upload provider returned an invalid image URL")
     return UploadResponse(

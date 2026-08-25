@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     cloudinary_upload_preset: str | None = Field(
         default=None, alias="CLOUDINARY_UPLOAD_PRESET"
     )
+    cloudinary_api_key: str | None = Field(default=None, alias="CLOUDINARY_API_KEY")
+    cloudinary_api_secret: str | None = Field(default=None, alias="CLOUDINARY_API_SECRET")
 
     def normalized_database_url(self) -> str:
         value = self.database_url.strip()

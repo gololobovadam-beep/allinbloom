@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import hashlib
 from io import BytesIO
 import os
 import unittest
@@ -24,6 +25,7 @@ from app.api.routes.reviews import (
     public_review_limiter,
 )
 from app.api.routes.upload import (
+    _authenticated_upload_data,
     _normalized_upload_options,
     _read_and_validate_file,
     _upload_to_cloudinary,
@@ -141,6 +143,22 @@ class ReviewAndUploadSecurityTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             _normalized_upload_options(max_width=1200, max_height=900, fmt="gif")
 
+    def test_authenticated_upload_signs_all_cloudinary_upload_parameters(self):
+        with patch.object(settings, "cloudinary_cloud_name", "all-in-bloom"), patch.object(
+            settings, "cloudinary_upload_preset", "admin-images"
+        ), patch.object(settings, "cloudinary_api_key", "123456789"), patch.object(
+            settings, "cloudinary_api_secret", "api-secret"
+        ), patch("app.api.routes.upload.time.time", return_value=1_700_000_000):
+            data = _authenticated_upload_data(max_width=1200, max_height=900, fmt="webp")
+
+        expected = (
+            "format=webp&timestamp=1700000000&transformation=c_limit,w_1200,h_900,q_auto"
+            "&upload_preset=admin-imagesapi-secret"
+        )
+        self.assertEqual(data["api_key"], "123456789")
+        self.assertEqual(data["signature"], hashlib.sha1(expected.encode()).hexdigest())
+        self.assertNotIn("api_secret", data)
+
     def test_upload_rejects_gif_before_sending_to_provider(self):
         upload = UploadFile(
             filename="animated.gif",
@@ -176,6 +194,8 @@ class ReviewAndUploadSecurityTests(unittest.TestCase):
         )
         with patch.object(settings, "cloudinary_cloud_name", "all-in-bloom"), patch.object(
             settings, "cloudinary_upload_preset", "restricted-server-preset"
+        ), patch.object(settings, "cloudinary_api_key", "123456789"), patch.object(
+            settings, "cloudinary_api_secret", "api-secret"
         ), patch("app.api.routes.upload.httpx.AsyncClient", return_value=InvalidJsonClient()):
             with self.assertRaises(HTTPException) as raised:
                 asyncio.run(_upload_to_cloudinary(upload, b"RIFF\x04\x00\x00\x00WEBP"))
