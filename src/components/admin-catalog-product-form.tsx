@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { Bouquet } from "@/lib/api-types";
 import AdminImageList from "@/components/admin-image-list";
+import { FilterDropdown } from "@/components/catalog-filters";
 import { getBouquetGalleryImages } from "@/lib/bouquet-images";
 
 type EditableCatalogType = "BALOONS" | "GIFTS" | "EVENT_SPACE";
@@ -70,6 +71,10 @@ export default function AdminCatalogProductForm({
       : [];
   });
   const [error, setError] = useState("");
+  const [videoOrientation, setVideoOrientation] = useState<"HORIZONTAL" | "VERTICAL">(
+    product?.videoOrientation || "HORIZONTAL"
+  );
+  const [isVideoFormatOpen, setIsVideoFormatOpen] = useState(false);
 
   const updateTier = (index: number, field: keyof TierDraft, value: string) => {
     setTiers((current) =>
@@ -178,17 +183,21 @@ export default function AdminCatalogProductForm({
                   Only a YouTube link is embedded on the storefront.
                 </span>
               </label>
-              <label className="flex flex-col gap-2 text-sm text-stone-700">
-                Video format
-                <select
-                  name="videoOrientation"
-                  defaultValue={product?.videoOrientation || "HORIZONTAL"}
-                  className={controlClass}
-                >
-                  <option value="HORIZONTAL">Horizontal</option>
-                  <option value="VERTICAL">Vertical</option>
-                </select>
-              </label>
+              <input type="hidden" name="videoOrientation" value={videoOrientation} />
+              <FilterDropdown
+                label="Video format"
+                controlId={`catalog-video-format-${product?.id || catalogType}`}
+                value={videoOrientation}
+                options={[
+                  { value: "HORIZONTAL", label: "Horizontal" },
+                  { value: "VERTICAL", label: "Vertical" },
+                ]}
+                isOpen={isVideoFormatOpen}
+                onToggle={() => setIsVideoFormatOpen((current) => !current)}
+                onClose={() => setIsVideoFormatOpen(false)}
+                onSelect={(value) => setVideoOrientation(value as "HORIZONTAL" | "VERTICAL")}
+                showCurrentLabel={false}
+              />
             </div>
           ) : null}
           {!isEventSpace ? (

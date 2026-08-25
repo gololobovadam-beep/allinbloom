@@ -24,7 +24,7 @@ type FilterFormValues = {
 
 type DropdownField = "color" | "bouquetType" | "sort";
 
-type FilterOption = {
+export type FilterOption = {
   value: string;
   label: string;
 };
@@ -89,9 +89,10 @@ type FilterDropdownProps = {
   onSelect: (value: string) => void;
   onClose: () => void;
   controlId: string;
+  showCurrentLabel?: boolean;
 };
 
-function FilterDropdown({
+export function FilterDropdown({
   label,
   value,
   options,
@@ -100,6 +101,7 @@ function FilterDropdown({
   onSelect,
   onClose,
   controlId,
+  showCurrentLabel = true,
 }: FilterDropdownProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const selectedLabel = useMemo(
@@ -188,7 +190,7 @@ function FilterDropdown({
                 className="custom-select-option"
               >
                 <span>{option.label}</span>
-                {active ? (
+                {active && showCurrentLabel ? (
                   <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand)]">
                     Current
                   </span>

@@ -32,9 +32,9 @@ export default function AdminHomeImagesForm({
   return (
     <form
       action={action}
-      className="glass relative z-10 max-w-full space-y-6 rounded-[28px] border border-white/80 p-4 sm:p-6"
+      className="relative z-10 max-w-full space-y-6"
     >
-      <div className="space-y-4">
+      <section className="space-y-4 rounded-[24px] border border-white/80 bg-white/60 p-4 sm:p-5">
         <h2 className="text-lg font-semibold text-stone-900">Hero image</h2>
         <AdminImageUpload
           name="homeHeroImage"
@@ -43,9 +43,9 @@ export default function AdminHomeImagesForm({
           defaultValue={settings.homeHeroImage}
           recommendedSize="1200x1500"
         />
-      </div>
+      </section>
 
-      <div className="space-y-4">
+      <section className="space-y-4 rounded-[24px] border border-white/80 bg-white/60 p-4 sm:p-5">
         <AdminImageList
           name="homeGalleryImages"
           initialImages={getHomeGalleryImages(settings)}
@@ -53,12 +53,49 @@ export default function AdminHomeImagesForm({
           description="Add any number of images and use the arrows to choose their order. Only the first six are displayed on the homepage."
           previewAlt="Homepage gallery image"
           recommendedSize="1000x1000"
+          columns={2}
         />
-      </div>
+      </section>
 
-      <div className="space-y-4">
+      <section className="space-y-4 rounded-[24px] border border-white/80 bg-white/60 p-4 sm:p-5">
         <h2 className="text-lg font-semibold text-stone-900">
-          Catalog category images
+          Shop all category images
+        </h2>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AdminImageUpload
+            name="shopAllImageFlowers"
+            urlLabel="Flowers category image URL"
+            previewAlt="Flowers category image preview"
+            defaultValue={settings.shopAllImageFlowers}
+            recommendedSize="1000x1000"
+          />
+          <AdminImageUpload
+            name="shopAllImageBalloons"
+            urlLabel="Balloons category image URL"
+            previewAlt="Balloons category image preview"
+            defaultValue={settings.shopAllImageBalloons}
+            recommendedSize="1000x1000"
+          />
+          <AdminImageUpload
+            name="shopAllImageGiftBox"
+            urlLabel="Gift Box category image URL"
+            previewAlt="Gift Box category image preview"
+            defaultValue={settings.shopAllImageGiftBox}
+            recommendedSize="1000x1000"
+          />
+          <AdminImageUpload
+            name="shopAllImageEventSpace"
+            urlLabel="Event Space category image URL"
+            previewAlt="Event Space category image preview"
+            defaultValue={settings.shopAllImageEventSpace}
+            recommendedSize="1000x1000"
+          />
+        </div>
+      </section>
+
+      <section className="space-y-4 rounded-[24px] border border-white/80 bg-white/60 p-4 sm:p-5">
+        <h2 className="text-lg font-semibold text-stone-900">
+          Flowers category images
         </h2>
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminImageUpload
@@ -90,7 +127,7 @@ export default function AdminHomeImagesForm({
             recommendedSize="1000x1000"
           />
         </div>
-      </div>
+      </section>
 
       <div className="flex flex-wrap gap-3">
         <SubmitButton />

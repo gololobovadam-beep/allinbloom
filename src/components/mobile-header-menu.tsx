@@ -12,9 +12,13 @@ type NavigationItem = {
 
 type MobileHeaderMenuProps = {
   items: NavigationItem[];
+  compact?: boolean;
 };
 
-export default function MobileHeaderMenu({ items }: MobileHeaderMenuProps) {
+export default function MobileHeaderMenu({
+  items,
+  compact = false,
+}: MobileHeaderMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
   const menuId = useId();
@@ -56,7 +60,9 @@ export default function MobileHeaderMenu({ items }: MobileHeaderMenuProps) {
         aria-expanded={isOpen}
         aria-controls={menuId}
         aria-label={isOpen ? "Close navigation menu" : "Open navigation menu"}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-600 shadow-sm transition hover:border-stone-300 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand)] focus-visible:ring-offset-2"
+        className={`inline-flex items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-600 shadow-sm transition hover:border-stone-300 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand)] focus-visible:ring-offset-2 ${
+          compact ? "h-[29px] w-[29px]" : "h-8 w-8"
+        }`}
       >
         {isOpen ? (
           <svg

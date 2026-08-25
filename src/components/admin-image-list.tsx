@@ -11,6 +11,7 @@ type AdminImageListProps = {
   previewAlt: string;
   recommendedSize?: string;
   required?: boolean;
+  columns?: 1 | 2;
 };
 
 const cleanImages = (images: string[] = []) =>
@@ -56,6 +57,7 @@ function AdminImageListEditor({
   previewAlt,
   recommendedSize = "1000x1000",
   required = true,
+  columns = 1,
 }: AdminImageListProps) {
   const [images, setImages] = useState<ImageEntry[]>(() => {
     const normalized = cleanImages(initialImages);
@@ -87,7 +89,7 @@ function AdminImageListEditor({
           <p className="text-sm leading-relaxed text-stone-600">{description}</p>
         ) : null}
       </div>
-      <div className="grid min-w-0 gap-4">
+      <div className={`grid min-w-0 gap-4 ${columns === 2 ? "lg:grid-cols-2" : ""}`}>
         {images.map((image, index) => (
           <div
             key={image.id}

@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api-server";
 
 export type CatalogSearchParams = {
   entry?: string;
+  section?: string;
   catalogType?: CatalogType | string;
   flower?: string;
   color?: string;

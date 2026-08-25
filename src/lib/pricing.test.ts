@@ -34,6 +34,10 @@ const baseSettings: StoreSettings = {
   catalogCategoryImageMixed: "/images/bouquet-5.webp",
   catalogCategoryImageSeason: "/images/bouquet-2.webp",
   catalogCategoryImageAll: "/images/hero-bouquet.webp",
+  shopAllImageFlowers: "/images/hero-bouquet.webp",
+  shopAllImageBalloons: "/images/bouquet-2.webp",
+  shopAllImageGiftBox: "/images/bouquet-5.webp",
+  shopAllImageEventSpace: "/images/bouquet-7.webp",
 };
 
 const makeSettings = (overrides: Partial<StoreSettings> = {}): StoreSettings => ({

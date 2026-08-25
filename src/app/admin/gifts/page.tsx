@@ -4,8 +4,8 @@ export default function AdminGiftsPage() {
   return (
     <AdminCatalogManagementPage
       catalogType="GIFTS"
-      title="Manage gifts"
-      label="Gifts"
+      title="Manage Gift Box"
+      label="Gift Box"
       basePath="/admin/gifts"
     />
   );

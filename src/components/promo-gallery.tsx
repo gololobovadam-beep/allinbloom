@@ -264,7 +264,7 @@ export default function PromoGallery({ slides }: PromoGalleryProps) {
             Studio offers
           </p>
           <h2 className="text-2xl font-semibold text-stone-900 sm:text-4xl">
-            Seasonal promotions
+            Additional options
           </h2>
         </div>
         <div className="hidden text-xs uppercase tracking-[0.28em] text-stone-500 sm:block">

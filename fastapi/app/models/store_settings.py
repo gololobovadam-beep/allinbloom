@@ -92,6 +92,30 @@ class StoreSettings(Base):
         default="/images/hero-bouquet.webp",
         nullable=False,
     )
+    shop_all_image_flowers = Column(
+        "shopAllImageFlowers",
+        String,
+        default="/images/hero-bouquet.webp",
+        nullable=False,
+    )
+    shop_all_image_balloons = Column(
+        "shopAllImageBalloons",
+        String,
+        default="/images/bouquet-2.webp",
+        nullable=False,
+    )
+    shop_all_image_gift_box = Column(
+        "shopAllImageGiftBox",
+        String,
+        default="/images/bouquet-5.webp",
+        nullable=False,
+    )
+    shop_all_image_event_space = Column(
+        "shopAllImageEventSpace",
+        String,
+        default="/images/bouquet-7.webp",
+        nullable=False,
+    )
     updated_at = Column(
         "updatedAt",
         DateTime(timezone=True),

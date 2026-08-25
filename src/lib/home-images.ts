@@ -15,6 +15,12 @@ export const DEFAULT_CATALOG_CATEGORY_IMAGES = {
   season: "/images/bouquet-2.webp",
   all: "/images/hero-bouquet.webp",
 } as const;
+export const DEFAULT_SHOP_ALL_CATEGORY_IMAGES = {
+  flowers: "/images/hero-bouquet.webp",
+  balloons: "/images/bouquet-2.webp",
+  giftBox: "/images/bouquet-5.webp",
+  eventSpace: "/images/bouquet-7.webp",
+} as const;
 
 const coerceImageUrl = (value: string | null | undefined, fallback: string) => {
   const trimmed = String(value || "").trim();
@@ -60,5 +66,24 @@ export const getCatalogCategoryImages = (settings: StoreSettings) => ({
   all: coerceImageUrl(
     settings.catalogCategoryImageAll,
     DEFAULT_CATALOG_CATEGORY_IMAGES.all
+  ),
+});
+
+export const getShopAllCategoryImages = (settings: StoreSettings) => ({
+  flowers: coerceImageUrl(
+    settings.shopAllImageFlowers,
+    DEFAULT_SHOP_ALL_CATEGORY_IMAGES.flowers
+  ),
+  balloons: coerceImageUrl(
+    settings.shopAllImageBalloons,
+    DEFAULT_SHOP_ALL_CATEGORY_IMAGES.balloons
+  ),
+  giftBox: coerceImageUrl(
+    settings.shopAllImageGiftBox,
+    DEFAULT_SHOP_ALL_CATEGORY_IMAGES.giftBox
+  ),
+  eventSpace: coerceImageUrl(
+    settings.shopAllImageEventSpace,
+    DEFAULT_SHOP_ALL_CATEGORY_IMAGES.eventSpace
   ),
 });

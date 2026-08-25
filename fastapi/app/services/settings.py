@@ -32,6 +32,10 @@ DEFAULT_SETTINGS = {
     "catalog_category_image_mixed": "/images/bouquet-5.webp",
     "catalog_category_image_season": "/images/bouquet-2.webp",
     "catalog_category_image_all": "/images/hero-bouquet.webp",
+    "shop_all_image_flowers": "/images/hero-bouquet.webp",
+    "shop_all_image_balloons": "/images/bouquet-2.webp",
+    "shop_all_image_gift_box": "/images/bouquet-5.webp",
+    "shop_all_image_event_space": "/images/bouquet-7.webp",
 }
 
 

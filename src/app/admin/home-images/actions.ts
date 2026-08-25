@@ -8,6 +8,7 @@ import {
   DEFAULT_CATALOG_CATEGORY_IMAGES,
   DEFAULT_HOME_GALLERY_IMAGES,
   DEFAULT_HOME_HERO_IMAGE,
+  DEFAULT_SHOP_ALL_CATEGORY_IMAGES,
 } from "@/lib/home-images";
 
 const parseImageUrl = (value: FormDataEntryValue | null, fallback: string) => {
@@ -48,10 +49,29 @@ export async function updateHomeImages(formData: FormData) {
       formData.get("catalogCategoryImageAll"),
       DEFAULT_CATALOG_CATEGORY_IMAGES.all
     ),
+    shopAllImageFlowers: parseImageUrl(
+      formData.get("shopAllImageFlowers"),
+      DEFAULT_SHOP_ALL_CATEGORY_IMAGES.flowers
+    ),
+    shopAllImageBalloons: parseImageUrl(
+      formData.get("shopAllImageBalloons"),
+      DEFAULT_SHOP_ALL_CATEGORY_IMAGES.balloons
+    ),
+    shopAllImageGiftBox: parseImageUrl(
+      formData.get("shopAllImageGiftBox"),
+      DEFAULT_SHOP_ALL_CATEGORY_IMAGES.giftBox
+    ),
+    shopAllImageEventSpace: parseImageUrl(
+      formData.get("shopAllImageEventSpace"),
+      DEFAULT_SHOP_ALL_CATEGORY_IMAGES.eventSpace
+    ),
   });
 
   revalidatePath("/admin/home-images");
   revalidatePath("/catalog");
+  revalidatePath("/balloons");
+  revalidatePath("/gifts");
+  revalidatePath("/event-space");
   revalidatePath("/");
   redirect("/admin/home-images?toast=home-images-saved");
 }

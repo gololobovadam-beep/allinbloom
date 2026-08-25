@@ -168,6 +168,10 @@ export type StoreSettings = {
   catalogCategoryImageMixed: string;
   catalogCategoryImageSeason: string;
   catalogCategoryImageAll: string;
+  shopAllImageFlowers: string;
+  shopAllImageBalloons: string;
+  shopAllImageGiftBox: string;
+  shopAllImageEventSpace: string;
 };
 
 export type DiscountInfo = {

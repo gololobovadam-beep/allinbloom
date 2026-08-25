@@ -5,9 +5,11 @@ import {
   DEFAULT_CATALOG_CATEGORY_IMAGES,
   DEFAULT_HOME_GALLERY_IMAGES,
   DEFAULT_HOME_HERO_IMAGE,
+  DEFAULT_SHOP_ALL_CATEGORY_IMAGES,
   getCatalogCategoryImages,
   getHomeGalleryImages,
   getHomeHeroImage,
+  getShopAllCategoryImages,
   getVisibleHomeGalleryImages,
 } from "@/lib/home-images";
 
@@ -36,6 +38,10 @@ const baseSettings: StoreSettings = {
   catalogCategoryImageMixed: "/images/custom-mixed.webp",
   catalogCategoryImageSeason: "/images/custom-season.webp",
   catalogCategoryImageAll: "/images/custom-all.webp",
+  shopAllImageFlowers: "/images/custom-flowers.webp",
+  shopAllImageBalloons: "/images/custom-balloons.webp",
+  shopAllImageGiftBox: "/images/custom-gift-box.webp",
+  shopAllImageEventSpace: "/images/custom-event-space.webp",
 };
 
 const makeSettings = (overrides: Partial<StoreSettings> = {}): StoreSettings => ({
@@ -81,6 +87,22 @@ describe("home image fallback helpers", () => {
       mixed: DEFAULT_CATALOG_CATEGORY_IMAGES.mixed,
       season: "/images/custom-season.webp",
       all: "/images/custom-all.webp",
+    });
+  });
+
+  it("returns Shop all category image defaults when values are blank", () => {
+    const images = getShopAllCategoryImages(
+      makeSettings({
+        shopAllImageFlowers: "  ",
+        shopAllImageBalloons: "",
+      })
+    );
+
+    expect(images).toEqual({
+      flowers: DEFAULT_SHOP_ALL_CATEGORY_IMAGES.flowers,
+      balloons: DEFAULT_SHOP_ALL_CATEGORY_IMAGES.balloons,
+      giftBox: "/images/custom-gift-box.webp",
+      eventSpace: "/images/custom-event-space.webp",
     });
   });
 

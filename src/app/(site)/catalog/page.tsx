@@ -6,7 +6,10 @@ import CatalogGrid from "@/components/catalog-grid";
 import { getBouquets } from "@/lib/data/bouquets";
 import type { CatalogSearchParams } from "@/lib/data/bouquets";
 import { getStoreSettings } from "@/lib/data/settings";
-import { getCatalogCategoryImages } from "@/lib/home-images";
+import {
+  getCatalogCategoryImages,
+  getShopAllCategoryImages,
+} from "@/lib/home-images";
 import { getBouquetPricing } from "@/lib/pricing";
 import { SITE_DESCRIPTION } from "@/lib/site";
 import { getAuthSession } from "@/lib/auth-session";
@@ -39,6 +42,75 @@ const CATALOG_CATEGORY_TILES = [
     href: "/catalog?entry=1",
   },
 ] as const;
+
+const SHOP_ALL_CATEGORY_TILES = [
+  { key: "flowers", title: "Flowers", href: "/catalog?section=flowers" },
+  { key: "balloons", title: "Balloons", href: "/balloons" },
+  { key: "giftBox", title: "Gift Box", href: "/gifts" },
+  { key: "eventSpace", title: "Event Space", href: "/event-space" },
+] as const;
+
+type CategoryTile = {
+  title: string;
+  href: string;
+  image: string;
+};
+
+function CategoryTileGrid({
+  tiles,
+  singleLineLabels = false,
+}: {
+  tiles: readonly CategoryTile[];
+  singleLineLabels?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      {tiles.map((tile) => {
+        const [firstWord, ...restWords] = tile.title.split(" ");
+        return (
+          <Link
+            key={tile.title}
+            href={tile.href}
+            className="group relative isolate overflow-hidden rounded-[24px] border border-white/80 bg-white/70 shadow-sm transition lg:hover:-translate-y-1 lg:hover:shadow-[0_16px_35px_rgba(var(--brand-rgb),0.22)]"
+          >
+            <div className="relative aspect-square w-full">
+              <Image
+                src={tile.image}
+                alt={tile.title}
+                fill
+                sizes="(max-width: 639px) 48vw, (max-width: 1023px) 30vw, 22vw"
+                className="object-cover transition duration-500 lg:group-hover:scale-110"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[rgba(26,11,8,0.72)] via-[rgba(26,11,8,0.28)] to-transparent transition lg:group-hover:from-[rgba(26,11,8,0.82)]" />
+              <div className="absolute inset-x-2 bottom-2 rounded-2xl border border-white/40 bg-white/18 px-3 py-2 backdrop-blur">
+                <p
+                  className={`font-semibold uppercase text-white ${
+                    singleLineLabels
+                      ? "whitespace-nowrap text-[9px] tracking-[0.12em] sm:text-xs sm:tracking-[0.18em]"
+                      : "text-[11px] tracking-[0.2em] sm:text-xs sm:tracking-[0.24em]"
+                  }`}
+                >
+                  {singleLineLabels ? (
+                    tile.title
+                  ) : (
+                    <>
+                      <span className="block leading-tight">{firstWord}</span>
+                      {restWords.length ? (
+                    <span className="mt-0.5 block leading-tight">
+                      {restWords.join(" ")}
+                    </span>
+                      ) : null}
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
 
 const getInitialPageSize = async () => {
   const headerStore = await headers();
@@ -80,22 +152,30 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const params = await searchParams;
   const hasListingContext = hasCatalogListingContext(params);
+  const isFlowersCategoryScreen = params.section === "flowers";
+  const isShopAllScreen = !hasListingContext && !isFlowersCategoryScreen;
   const isFeatured = params.filter === "featured";
-  const title = !hasListingContext
+  const title = isShopAllScreen
+    ? "Shop All | All in Bloom Floral Studio"
+    : !hasListingContext
     ? "Bouquet Categories | Chicago Flower Delivery"
     : isFeatured
     ? "Signature Bouquets | Chicago Florist"
     : "Bouquet Catalog | Chicago Flower Delivery";
-  const description = !hasListingContext
+  const description = isShopAllScreen
+    ? "Browse Flowers, Balloons, Gift Box, and Event Space."
+    : !hasListingContext
     ? "Choose a bouquet category: mono, mixed, seasonal, or all bouquets."
     : isFeatured
     ? "Discover our most-loved signature bouquets curated by Chicago florists."
     : "Browse our full Chicago flower delivery catalog. Filter by flower, palette, bouquet type, and price.";
-  const canonical = isFeatured
+  const canonical = isShopAllScreen
+    ? "/catalog"
+    : isFeatured
     ? "/catalog?filter=featured"
     : hasListingContext
     ? "/catalog?entry=1"
-    : "/catalog";
+    : "/catalog?section=flowers";
 
   return {
     title,
@@ -118,12 +198,33 @@ export default async function CatalogPage({
 }) {
   const params = await searchParams;
   const hasListingContext = hasCatalogListingContext(params);
+  const isFlowersCategoryScreen = params.section === "flowers";
   const settings = await getStoreSettings();
   const catalogCategoryImages = getCatalogCategoryImages(settings);
+  const shopAllCategoryImages = getShopAllCategoryImages(settings);
   const catalogCategoryTiles = CATALOG_CATEGORY_TILES.map((tile) => ({
     ...tile,
     image: catalogCategoryImages[tile.key],
   }));
+  const shopAllCategoryTiles = SHOP_ALL_CATEGORY_TILES.map((tile) => ({
+    ...tile,
+    image: shopAllCategoryImages[tile.key],
+  }));
+  if (!hasListingContext && !isFlowersCategoryScreen) {
+    return (
+      <div className="flex flex-col gap-6 sm:gap-8">
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-[0.32em] text-stone-500">
+            Full catalog
+          </p>
+          <h1 className="text-3xl font-semibold text-stone-900 sm:text-5xl">
+            Shop all
+          </h1>
+        </div>
+        <CategoryTileGrid tiles={shopAllCategoryTiles} singleLineLabels />
+      </div>
+    );
+  }
   if (!hasListingContext) {
     return (
       <div className="flex flex-col gap-6 sm:gap-8">
@@ -138,37 +239,7 @@ export default async function CatalogPage({
             Start with a category, then refine your selection with filters.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          {catalogCategoryTiles.map((tile) => {
-            const [firstWord, ...restWords] = tile.title.split(" ");
-            return (
-              <Link
-                key={tile.title}
-                href={tile.href}
-                className="group relative isolate overflow-hidden rounded-[24px] border border-white/80 bg-white/70 shadow-sm transition lg:hover:-translate-y-1 lg:hover:shadow-[0_16px_35px_rgba(var(--brand-rgb),0.22)]"
-              >
-                <div className="relative aspect-square w-full">
-                  <Image
-                    src={tile.image}
-                    alt={tile.title}
-                    fill
-                    sizes="(max-width: 639px) 48vw, (max-width: 1023px) 30vw, 22vw"
-                    className="object-cover transition duration-500 lg:group-hover:scale-110"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[rgba(26,11,8,0.72)] via-[rgba(26,11,8,0.28)] to-transparent transition lg:group-hover:from-[rgba(26,11,8,0.82)]" />
-                  <div className="absolute inset-x-2 bottom-2 rounded-2xl border border-white/40 bg-white/18 px-3 py-2 backdrop-blur">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white sm:text-xs sm:tracking-[0.24em]">
-                      <span className="block leading-tight">{firstWord}</span>
-                      <span className="mt-0.5 block leading-tight">
-                        {restWords.join(" ")}
-                      </span>
-                    </p>
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+        <CategoryTileGrid tiles={catalogCategoryTiles} />
       </div>
     );
   }

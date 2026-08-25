@@ -3,13 +3,17 @@
 import Link from "next/link";
 import { useCart } from "@/lib/cart";
 
-export default function CartBadge() {
+export default function CartBadge({ compact = false }: { compact?: boolean }) {
   const { itemCount } = useCart();
 
   return (
     <Link
       href="/cart"
-      className="relative rounded-full border border-stone-200 bg-white/80 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-stone-600 sm:px-4 sm:text-xs sm:tracking-[0.3em]"
+      className={`relative inline-flex items-center whitespace-nowrap rounded-full border border-stone-200 bg-white/80 uppercase text-stone-600 transition hover:border-stone-300 hover:text-stone-900 sm:px-4 sm:py-2 sm:text-xs sm:tracking-[0.3em] ${
+        compact
+          ? "px-2.5 py-[7px] text-[10px] tracking-[0.18em]"
+          : "px-3 py-2 text-[11px] tracking-[0.22em]"
+      }`}
     >
       Cart
       {itemCount > 0 ? (

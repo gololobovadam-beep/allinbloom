@@ -39,6 +39,10 @@ class StoreSettingsOut(SchemaBase):
     catalog_category_image_mixed: str
     catalog_category_image_season: str
     catalog_category_image_all: str
+    shop_all_image_flowers: str
+    shop_all_image_balloons: str
+    shop_all_image_gift_box: str
+    shop_all_image_event_space: str
 
 
 class StoreSettingsUpdate(SchemaBase):
@@ -71,6 +75,10 @@ class StoreSettingsUpdate(SchemaBase):
     catalog_category_image_mixed: Optional[str] = Field(default=None, max_length=2048)
     catalog_category_image_season: Optional[str] = Field(default=None, max_length=2048)
     catalog_category_image_all: Optional[str] = Field(default=None, max_length=2048)
+    shop_all_image_flowers: Optional[str] = Field(default=None, max_length=2048)
+    shop_all_image_balloons: Optional[str] = Field(default=None, max_length=2048)
+    shop_all_image_gift_box: Optional[str] = Field(default=None, max_length=2048)
+    shop_all_image_event_space: Optional[str] = Field(default=None, max_length=2048)
 
     @model_validator(mode="after")
     def validate_price_range(self):

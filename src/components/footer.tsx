@@ -25,7 +25,7 @@ export default function Footer() {
             Balloons
           </Link>
           <Link href="/gifts" className="block hover:text-stone-800">
-            Gifts
+            Gift Box
           </Link>
           <Link href="/event-space" className="block hover:text-stone-800">
             Event space

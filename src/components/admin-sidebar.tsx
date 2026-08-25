@@ -28,7 +28,7 @@ export default function AdminSidebar() {
           href="/admin/gifts"
           className="flex h-11 items-center rounded-2xl border border-transparent bg-white/70 px-3 transition hover:border-stone-200"
         >
-          Gifts
+          Gift Box
         </Link>
         <Link
           href="/admin/event-space"
