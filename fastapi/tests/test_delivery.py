@@ -85,14 +85,14 @@ class DeliveryValidationTests(unittest.TestCase):
         )
         self.assertIsNone(delivery._validate_address_format("123 Main St, Chicago, IL"))
 
-    def test_get_delivery_fee_cents_tiers(self):
+    def test_get_delivery_fee_cents_uses_new_distance_pricing(self):
         self.assertEqual(delivery.get_delivery_fee_cents(0), 0)
         self.assertEqual(delivery.get_delivery_fee_cents(10), 0)
-        self.assertEqual(delivery.get_delivery_fee_cents(10.01), 1500)
-        self.assertEqual(delivery.get_delivery_fee_cents(20), 1500)
-        self.assertEqual(delivery.get_delivery_fee_cents(25), 3000)
-        self.assertEqual(delivery.get_delivery_fee_cents(30), 3000)
-        self.assertIsNone(delivery.get_delivery_fee_cents(30.1))
+        self.assertEqual(delivery.get_delivery_fee_cents(10.5), 2000)
+        self.assertEqual(delivery.get_delivery_fee_cents(11.7), 2200)
+        self.assertEqual(delivery.get_delivery_fee_cents(12.4), 2400)
+        self.assertEqual(delivery.get_delivery_fee_cents(29.99), 5800)
+        self.assertIsNone(delivery.get_delivery_fee_cents(30))
 
     def test_build_delivery_quote_log_context_uses_safe_diagnostics(self):
         quote = delivery.DeliveryQuote(
@@ -161,7 +161,7 @@ class DeliveryQuoteTests(unittest.IsolatedAsyncioTestCase):
             quote = await delivery.get_delivery_quote("123 Main St, Chicago, IL")
 
         self.assertTrue(quote.ok)
-        self.assertEqual(quote.fee_cents, 3000)
+        self.assertEqual(quote.fee_cents, 5000)
         self.assertEqual(quote.distance_text, "25 mi")
         self.assertEqual(quote.formatted_address, "123 Main St, Chicago, IL")
         self.assertEqual(quote.code, "delivery_quote_ok")
@@ -183,7 +183,7 @@ class DeliveryQuoteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(quote.ok)
         self.assertIsNotNone(quote.error)
-        self.assertIn("within 30 miles", quote.error)
+        self.assertIn("within 29.99 miles", quote.error)
         self.assertEqual(quote.stage, "delivery_radius")
         self.assertEqual(quote.code, "delivery_out_of_range")
 

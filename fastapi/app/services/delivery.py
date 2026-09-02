@@ -9,11 +9,10 @@ import httpx
 from app.core.config import settings
 
 
-DELIVERY_TIERS = [
-    {"max_miles": 10, "fee_cents": 0},
-    {"max_miles": 20, "fee_cents": 1500},
-    {"max_miles": 30, "fee_cents": 3000},
-]
+FREE_DELIVERY_MAX_MILES = 10
+DELIVERY_MAX_MILES = 29.99
+DELIVERY_BASE_FEE_CENTS = 2_000
+DELIVERY_ADDITIONAL_MILE_FEE_CENTS = 200
 
 
 @dataclass
@@ -222,10 +221,18 @@ async def _validate_and_geocode(address: str, api_key: str) -> DeliveryValidatio
 
 
 def get_delivery_fee_cents(miles: float) -> Optional[int]:
-    for tier in DELIVERY_TIERS:
-        if miles <= tier["max_miles"]:
-            return tier["fee_cents"]
-    return None
+    if miles <= FREE_DELIVERY_MAX_MILES:
+        return 0
+    if miles > DELIVERY_MAX_MILES:
+        return None
+
+    # Charge the initial $20 for the first mile after the free radius, then
+    # add $2 for every whole additional mile begun.  For example: 10.5 = $20,
+    # 11.7 = $22, 12.4 = $24.
+    completed_miles_after_free_radius = int(miles - FREE_DELIVERY_MAX_MILES)
+    return DELIVERY_BASE_FEE_CENTS + (
+        completed_miles_after_free_radius * DELIVERY_ADDITIONAL_MILE_FEE_CENTS
+    )
 
 
 async def get_delivery_quote(raw_address: str) -> DeliveryQuote:
@@ -341,7 +348,7 @@ async def get_delivery_quote(raw_address: str) -> DeliveryQuote:
     miles = round((meters / 1609.344) * 100) / 100
     fee_cents = get_delivery_fee_cents(miles)
     if fee_cents is None:
-        max_miles = DELIVERY_TIERS[-1]["max_miles"]
+        max_miles = DELIVERY_MAX_MILES
         return _build_failed_quote(
             error=(
                 f"Delivery is available within {max_miles} miles of our studio. "

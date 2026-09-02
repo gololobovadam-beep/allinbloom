@@ -1914,8 +1914,8 @@ export default function CartView({
             {quoteLoading ? "Checking..." : "Check delivery"}
           </button>
           <p className="text-xs text-stone-500">
-            Delivery pricing: free within 10 miles, $15 within 20 miles, $30
-            within 30 miles.
+            Delivery pricing: free within 10 miles. After 10 miles, delivery
+            is $20 plus $2 for each additional mile, up to 29.99 miles.
           </p>
           {quote ? (
             <p className="text-xs text-stone-500">

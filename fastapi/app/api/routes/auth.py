@@ -140,12 +140,9 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _build_auth_response(response: Response, user: User, db: Session) -> TokenOut:
-    # A monotonic version gives logout and refresh server-side revocation.  A
-    # token copied before a rotation can no longer authenticate once the new
-    # version is committed.
-    user.auth_version = int(user.auth_version or 0) + 1
-    db.commit()
-    db.refresh(user)
+    # Keep the account's authorization version stable when a new device signs
+    # in or refreshes its session.  It is deliberately shared by all tokens
+    # for the account, so rotating it here would sign out every other device.
     subject = {
         "sub": user.id,
         "email": user.email,
@@ -609,20 +606,10 @@ def logout(
     request: Request,
     response: Response,
     refresh_cookie: str | None = Cookie(default=None, alias=settings.refresh_token_cookie_name),
-    db: Session = Depends(get_db),
 ):
     _reject_cross_site_cookie_request(request)
-    if refresh_cookie:
-        try:
-            payload = decode_refresh_token(refresh_cookie)
-            user_id = payload.get("sub")
-            if user_id:
-                user = db.execute(select(User).where(User.id == str(user_id))).scalars().first()
-                if user and payload.get("ver") == user.auth_version:
-                    user.auth_version = int(user.auth_version or 0) + 1
-                    db.commit()
-        except Exception:
-            db.rollback()
+    # Cookies belong to this browser/device.  Clearing them locally must not
+    # revoke valid sessions on the customer's other devices.
     _clear_access_cookie(response)
     _clear_refresh_cookie(response)
     return {"ok": True}

@@ -5,13 +5,16 @@ from datetime import datetime, timedelta, timezone
 import os
 import re
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
+from fastapi import Response
 from app.core import security
 from app.core.config import settings
-from app.api.routes.auth import _google_oauth_error_response
+from app.api.routes.auth import _build_auth_response, _google_oauth_error_response
+from app.models.enums import Role
+from app.models.user import User
 
 
 class SecurityTests(unittest.TestCase):
@@ -48,6 +51,27 @@ class SecurityTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 security.decode_access_token(refresh)
+
+    def test_signing_in_on_another_device_keeps_existing_session_version(self):
+        user = User(
+            id="user-1",
+            email="customer@example.com",
+            name="Customer",
+            role=Role.CUSTOMER,
+            auth_version=7,
+        )
+        db = Mock()
+
+        with patch.object(
+            settings, "auth_secret", "unit-test-secret-with-at-least-32-characters"
+        ), patch.object(settings, "environment", "test"):
+            first_response = Response()
+            _build_auth_response(first_response, user, db)
+            second_response = Response()
+            _build_auth_response(second_response, user, db)
+
+        self.assertEqual(user.auth_version, 7)
+        db.commit.assert_not_called()
 
     def test_checkout_access_token_is_bound_to_one_order_without_email_data(self):
         with patch.object(
